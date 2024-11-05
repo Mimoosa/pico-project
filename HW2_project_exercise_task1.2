@@ -1,0 +1,56 @@
+from machine import UART, Pin, I2C, Timer, ADC
+from ssd1306 import SSD1306_I2C
+
+# Initialize button pins with pull-up resistors (SW0 and SW2)
+sw0_button = Pin(9, Pin.IN, Pin.PULL_UP)
+sw2_button = Pin(7, Pin.IN, Pin.PULL_UP)
+
+# Set up I2C communication for the OLED display
+i2c = I2C(1, scl=Pin(15), sda=Pin(14), freq=400000)
+
+# Define OLED screen dimensions
+oled_width = 128
+oled_height = 64
+
+# Initialize the OLED display with defined dimensions
+oled = SSD1306_I2C(oled_width, oled_height, i2c)
+
+# Set initial x-coordinate for text display
+x = 5
+
+# Initialize a list to store user input lines for display
+words = []
+
+# Infinite loop to continuously read and display user input
+while True:
+    # Clear the OLED screen before drawing new content
+    oled.fill(0)
+    
+    # Reset y-coordinate to start displaying from the top of the screen
+    y = 0
+    
+    # Loop through stored words and display each line
+    for word in words: 
+        # Draw each word at position (x, y)
+        oled.text(word, x, y, 1)
+        
+        # Check if there is space to add another line without scrolling
+        if y < 42:
+            y += 8
+        else:
+            # If screen is full, remove the top line from `words`.
+            del words[0]
+            # Set y to display at the bottom of the screen
+            y = 56
+            
+    # Get new user input from Thonny Shell
+    user_input = input("Type a word here: ")
+    
+    # Add the new input to `words` list for display
+    words.append(user_input)
+    
+    # Display the new word at the current y-coordinate
+    oled.text(user_input, x, y, 1)
+    
+    # Update the OLED screen to show all drawn text
+    oled.show()

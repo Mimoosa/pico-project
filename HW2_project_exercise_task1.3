@@ -1,0 +1,61 @@
+from machine import UART, Pin, I2C, Timer, ADC
+from ssd1306 import SSD1306_I2C
+
+# Initialize button pins with pull-up resistors (SW0, SW1, and SW2)
+sw0_button = Pin(9, Pin.IN, Pin.PULL_UP)
+sw1_button = Pin(8, Pin.IN, Pin.PULL_UP)
+sw2_button = Pin(7, Pin.IN, Pin.PULL_UP)
+
+# Set up I2C communication for the OLED display
+i2c = I2C(1, scl=Pin(15), sda=Pin(14), freq=400000)
+
+# Define OLED screen dimensions
+oled_width = 128
+oled_height = 64
+
+# Initialize the OLED display with defined dimensions
+oled = SSD1306_I2C(oled_width, oled_height, i2c)
+
+# Set initial position for drawing
+x = 0
+y = oled_height // 2
+
+# Infinite loop to control line drawing and handle button inputs
+while True:
+    
+    # Move pixel to the right; if it reaches the right edge, reset to the left
+    if x < oled_width:
+        x += 1
+    else:
+        x = 0
+        
+    # Check if SW0 (up button) is pressed to move the line up
+    if sw0_button() == 0:
+    
+        # Prevent going above the screen
+        if y > 0:
+            # Move line one pixel up
+            y -= 1
+            
+    # Check if SW2 (down button) is pressed to move the line down
+    if sw2_button() == 0:
+        # Prevent going below the screen
+        if y < 64:
+            # Move line one pixel down
+            y += 1
+            
+    # Check if SW1 (clear button) is pressed to reset drawing         
+    if sw1_button() == 0:
+        # Clear the OLED screen
+        oled.fill(0)
+        # Reset x position to the left edge
+        x = 0
+        # Reset y position to middle of the screen
+        y = oled_height // 2
+        
+    # Draw a pixel at the current (x, y) position
+    oled.pixel(x, y, 1)
+    
+    # Update the OLED display with the new pixel
+    oled.show()
+        

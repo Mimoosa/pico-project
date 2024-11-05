@@ -1,0 +1,51 @@
+import micropython
+micropython.alloc_emergency_exception_buf(200)
+from filefifo import Filefifo 
+data = Filefifo(10, name = 'capture_250Hz_01.txt') 
+
+# List to store the data values read from the file
+values = []
+
+# List to store detected peaks (index and value)
+peaks = []
+
+# First, read 800 samples and add them to the values list
+for _ in range(800):
+    
+    # Get a sample data
+    value = data.get()
+    
+    # Append the data point to the values list
+    values.append(value)
+
+# Loop through the values to detect peaks
+for i in range(1, len(values)-1):
+    
+    # Calculate the slope with the previous sample
+    slope_previous = values[i] - values[i - 1]
+    
+    # Calculate the slope with the next sample
+    slope_next = values[i] - values[i + 1]
+    
+    # Identify peaks where the slope changes from positive to negative
+    if slope_previous >= 0 and slope_next > 0:
+        
+        # Add the peak index and value to the peaks list
+        peaks.append((i, values[i]))
+        
+# Calculate and print peak-to-peak intervals and frequency       
+for i in range(len(peaks) - 1):
+
+    # Calculate the number of samples between two peaks
+    num_samples = peaks[i + 1][0] - peaks[i][0]
+    
+    # Convert the sample interval to seconds (sampling rate is 250 Hz)
+    ppi_seconds = num_samples / 250
+    
+    # Calculate the frequency of the signal
+    frequency = 1 / ppi_seconds
+    
+    print(f"The ppi in number of samples is {num_samples}, the ppi in seconds is {ppi_seconds}s, and the frequency of the signal is {frequency}Hz. ")
+    print("")
+
+     

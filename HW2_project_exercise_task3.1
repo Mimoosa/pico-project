@@ -1,0 +1,89 @@
+from machine import Pin, PWM  # Import necessary modules for pin control and PWM (Pulse Width Modulation)
+from fifo import Fifo
+import time # Import time module for delay handling
+ 
+# Define the Encoder class to manage the rotary encoder, LED control, and button handling 
+class Encoder:
+    def __init__(self, rot_a, rot_b, switch):
+         #Set up encoder pins for rotation detection (rot_a and rot_b)
+         self.a = Pin(rot_a, mode = Pin.IN, pull = Pin.PULL_UP)
+         self.b = Pin(rot_b, mode = Pin.IN, pull = Pin.PULL_UP)
+         # Set up button pin with pull-up resistor
+         self.switch = Pin(switch, mode = Pin.IN, pull = Pin.PULL_UP)
+         
+         # Set up LED on GPIO pin 22 and configure it for PWM to control brightness
+         self.led = Pin(22, Pin.OUT)
+         self.led_brightness = PWM(self.led, freq = 2000)# Set PWM frequency to 2000Hz for smooth brightness control
+         
+         # Initialize variables to manage button press, switch state, and LED brightness
+         self.switch_count = 0
+         self.button_pressed = False
+         self.switch_on = False
+         self.brightness = 50 # Initial brightness setting
+         
+         # Create FIFO buffer with a maximum of 30 items for encoder turn events
+         self.fifo = Fifo(30, typecode = 'i')
+         
+         # Set an interrupt handler for encoder rotation (rising edge on rot_a pin)
+         self.a.irq(handler = self.turning_encoder_handler, trigger = Pin.IRQ_RISING, hard = True)
+        
+            
+            
+    # Define interrupt handler for encoder rotation         
+    def turning_encoder_handler(self, pin):
+         if self.b(): # Check the state of rot_b to determine rotation direction
+             self.fifo.put(-1) # Put -1 in FIFO if rotation is counterclockwise
+         else:
+             self.fifo.put(1) # Put 1 in FIFO if rotation is clockwise
+            
+    # Toggle LED on/off state when button is pressed 
+    def change_on_off_for_switch(self):
+        self.button_pressed = False # Reset button press state after toggling
+        self.switch_count += 1# Track number of button presses
+        
+        # Toggle LED state based on switch count (odd/even)
+        if self.switch_count % 2 == 1:
+            self.change_brightness_for_led(50) # Set initial brightness if LED is turned on
+            self.switch_on = True
+        else:
+            self.change_brightness_for_led(0) # Turn off LED if button is pressed again
+            self.brightness = 50 # Reset brightness to default
+            self.switch_on = False
+    
+    # Adjust LED brightness based on the PWM duty cycle
+    def change_brightness_for_led(self, brightness):
+        self.led_brightness.duty_u16(brightness)# Set the brightness level using PWM
+            
+
+# Instantiate the Encoder object with GPIO pins for the encoder and button         
+rot = Encoder(10, 11, 12)
+
+
+# Main program loop
+while True:
+    # Poll the button state and debounce it to filter out switch bounce
+    if not rot.switch():
+        time.sleep_ms(150) # Short delay for debounce
+        if not rot.switch(): # Confirm button press after debounce
+            rot.button_pressed = True
+
+    # Check if the button was pressed and toggle LED on/off accordingly
+    if rot.button_pressed:
+        rot.change_on_off_for_switch()
+    
+    # Check if there are any encoder turn events in FIFO
+    if rot.fifo.has_data():
+        data = rot.fifo.get() # Retrieve turn event from FIFO
+        
+        # Adjust LED brightness if it is currently on
+        if rot.switch_on:
+            if data == -1:  # If data is -1, decrease brightness
+                if rot.brightness > 30: # Prevent brightness from going too low
+                    rot.brightness += data * 20 # Decrease brightness by a fixed amount
+                    rot.change_brightness_for_led(rot.brightness) # Update LED brightness
+            
+            else: # If data is 1, increase brightness
+                if rot.brightness < 32700: # Prevent brightness from going too high
+                    rot.brightness += data * 20  # Increase brightness by a fixed amount
+                    rot.change_brightness_for_led(rot.brightness) # Update LED brightness
+             

@@ -1,0 +1,43 @@
+from machine import UART, Pin, I2C, Timer, ADC
+from ssd1306 import SSD1306_I2C
+
+# Initialize button pins with pull-up resistors (SW0 and SW2)
+sw0_button = Pin(9, Pin.IN, Pin.PULL_UP)
+sw2_button = Pin(7, Pin.IN, Pin.PULL_UP)
+
+# Set up I2C communication for the OLED display
+i2c = I2C(1, scl=Pin(15), sda=Pin(14), freq=400000)
+
+# Define OLED screen dimensions
+oled_width = 128
+oled_height = 64
+
+# Initialize the OLED display with defined dimensions
+oled = SSD1306_I2C(oled_width, oled_height, i2c)
+
+# Set initial position for the UFO ("<=>") on the screen
+y = 55
+x = 50
+
+# Main loop to control UFO movement
+while True:
+    # Clear the OLED screen before each update
+    oled.fill(0)
+    
+    # Display the UFO at the current position (x, y)
+    oled.text('<=>', x, y, 1)
+    
+    # Update the OLED display with current contents
+    oled.show()
+    
+    # Check if SW0 (left button) is pressed
+    if sw0_button() == 0:
+        # Move UFO to the left if it’s not at the left screen edge
+        if x > 7:
+            # Decrease x-position to move UFO left
+            x -= 8
+    elif sw2_button() == 0:
+        # Move UFO to the right if it’s not at the right screen edge
+        if x < 95:
+            # Adjust x-position to move UFO right in increments
+            x += 8

@@ -1,0 +1,44 @@
+import micropython
+micropython.alloc_emergency_exception_buf(200)
+from filefifo import Filefifo 
+data = Filefifo(10, name = 'capture_250Hz_01.txt')
+
+# Initialize an empty list to store values read from the file
+values = []
+
+# Initialize max and min variables for storing peak values in the data
+max_value = 0
+min_value = 0
+
+# Read 2500 samples (10 seconds of data at 250Hz) and append to 'values'
+for _ in range(2500): 
+    value =  data.get()
+    values.append(value)
+
+# Loop through 2 seconds of the data to find max and min values using slope inspection
+for n in range(1, 500):
+
+    # Calculate the slope before and after the current value to detect peaks
+    previous_slope = values[n] - values[n - 1]
+    next_slope = values[n] - values[n + 1]
+    
+    # If the slopes show a peak, set max_value
+    if previous_slope >= 0 and next_slope > 0:
+        max_value = values[n]
+
+    # If the slopes show a low poing, set min_value    
+    elif previous_slope <= 0 and next_slope < 0:
+        min_value = values[n]
+
+# Rescale the data to a 0–100 range and print each scaled value
+for _ in range(2500):
+    value = data.get()
+    
+     # Scale using min and max values and print the scaled result
+    print((value - min_value) / (max_value - min_value) * 100 )
+
+
+    
+     
+    
+    

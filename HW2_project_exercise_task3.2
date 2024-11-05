@@ -1,0 +1,126 @@
+from machine import Pin, I2C # Import necessary libraries for hardware control
+from ssd1306 import SSD1306_I2C  # Import the SSD1306 OLED display driver
+from fifo import Fifo 
+import time # Import time module for timing operations
+
+class Encoder:
+    def __init__(self, rot_a, rot_b, switch):
+        # Initialize rotary encoder pins and switch
+        self.a = Pin(rot_a, mode=Pin.IN, pull=Pin.PULL_UP) # Pin for encoder A
+        self.b = Pin(rot_b, mode=Pin.IN, pull=Pin.PULL_UP) # Pin for encoder B
+        self.switch = Pin(switch, mode=Pin.IN, pull=Pin.PULL_UP) # Pin for switch
+        self.led1 = Pin(22, Pin.OUT) # Pin for LED 1
+        self.led2 = Pin(21, Pin.OUT) # Pin for LED 2
+        self.led3 = Pin(20, Pin.OUT) # Pin for LED 3
+        self.led1_condition = False # Initial state of LED 1
+        self.led2_condition = False # Initial state of LED 2
+        self.led3_condition = False # Initial state of LED 3
+        self.i2c = I2C(1, scl=Pin(15), sda=Pin(14), freq=400000) # Initialize I2C for OLED
+        self.oled_width = 128 # OLED width
+        self.oled_height = 64 # OLED height
+        self.oled = SSD1306_I2C(self.oled_width, self.oled_height, self.i2c) # Create OLED object
+        self.y_position = 0 # Initial y position for menu display
+        self.fifo = Fifo(30, typecode='i') # Create FIFO queue for events
+        self.a.irq(handler=self.turning_encoder_handler, trigger=Pin.IRQ_RISING, hard=True) # Set up interrupt for encoder turns
+        self.last_press_time = 0 # Initialize last press time for debounce filtering
+        self.switch.irq(handler=self.button_pressed_handler, trigger=Pin.IRQ_RISING, hard=True) # Set up interrupt for button press
+        self.highlight = 1 # Initialize highlighted menu item
+        self.toggle_led_on_off() # Update LED states based on initial conditions
+        self.display_menu()  # Display the initial menu on OLED
+  
+
+    def turning_encoder_handler(self, pin):
+        # Handler for rotary encoder turn events
+        if self.b(): # Check the state of encoder B
+            self.fifo.put(-1) # Put a value to indicate counter-clockwise turn
+            
+        else:
+            self.fifo.put(1) # Put a value to indicate clockwise turn
+
+    def button_pressed_handler(self, pin):
+        # Debounce the button to avoid false triggers
+        current_time = time.ticks_ms() # Get the current time in milliseconds
+      
+        if current_time - self.last_press_time > 50:  # Check if the press interval is greater than 50 ms
+            self.fifo.put(2) # Put a value to indicate button press
+            
+            self.last_press_time = current_time # Update last press time
+            
+    def display_menu(self):
+        # Display the menu on the OLED screen
+        self.y_position = 0 # Reset y position for drawing menu
+        self.oled.fill(0) # Clear the OLED screen
+        
+        for i in range(1, 4): # Loop through menu options
+            led = getattr(self, f"led{i}_condition") # Get the state of the current LED  
+            if led: # Check if the LED is True
+                option = f"LED{i} - ON" # Create option string for ON state
+            else:  
+                option = f"LED{i} - OFF" # Create option string for OFF state
+            
+            if i == self.highlight: # Highlight the selected option
+                self.oled.fill_rect(0, self.y_position, self.oled_width, 8, 1) # Draw highlight rectangle
+                self.oled.text(option, 0, self.y_position, 0) # Display highlighted option in black color
+    
+            else:
+                self.oled.text(option, 0, self.y_position, 1) # Display other options in white color
+            
+            self.y_position += 10 # Move down for the next option
+
+        self.oled.show() # Update the OLED display with new content
+   
+    def change_led_condition(self):
+        # Toggle the state of the currently highlighted LED
+        for i in range(1, 4): # Loop through all LEDs
+            led = getattr(self, f"led{i}") # Get the current LED object
+            led_condition_attr = f"led{i}_condition" # Get the attribute name for LED condition
+            led_condition = getattr(self, led_condition_attr) # Get the current condition of the LED
+            
+            if i == self.highlight: # Check if this LED is highlighted
+            
+                if led_condition: # If the LED is currently on
+                    setattr(self, led_condition_attr, False) # Turn it off
+                    
+                else: # If the LED is currently off
+                    setattr(self, led_condition_attr, True) # Turn it on
+                    
+        self.display_menu() # Update the menu display
+        
+        self.toggle_led_on_off() # Update LED states based on current conditions
+                   
+    
+    def toggle_led_on_off(self):
+        # Update the state of the LEDs based on their conditions
+        for i in range(1, 4): # Loop through all LEDs
+            led = getattr(self, f"led{i}") # Get the current LED object
+            led_condition = getattr(self, f"led{i}_condition") # Get the current condition of the LED
+            
+            if led_condition: # If the LED condition is True (ON)
+                led.on() # Turn on the LED
+                
+            else:
+                led.off() # Turn off the LED
+                
+
+# Instantiate the Encoder class with the specified pin numbers   
+rot = Encoder(10, 11, 12)
+    
+
+while True:
+    # Main loop for handling events from the FIFO queue
+    if rot.fifo.has_data(): # Check if there is data in the FIFO
+        data = rot.fifo.get() # Get the data from the FIFO
+        
+        if data == 2: # Check if the button press event is received
+            rot.change_led_condition() # Toggle the condition of the selected LED
+            
+        if data == -1: # Check for counter-clockwise turn event
+            if rot.highlight > 1: # Prevent going below the first option
+                rot.highlight -= 1 # Move highlight up in the menu
+                rot.display_menu() # Update the menu display
+                
+        elif data == 1:  # Check for clockwise turn event
+            if rot.highlight < 3:  # Prevent going above the last optio
+                rot.highlight += 1 # Move highlight down in the menu
+                rot.display_menu() # Update the menu display
+           
