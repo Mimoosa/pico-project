@@ -2,6 +2,8 @@ from machine import Pin, I2C # Import necessary libraries for hardware control
 from ssd1306 import SSD1306_I2C  # Import the SSD1306 OLED display driver
 from fifo import Fifo 
 import time # Import time module for timing operations
+import micropython
+micropython.alloc_emergency_exception_buf(200) # Allocate buffer for emergency exception handling
 
 class Encoder:
     def __init__(self, rot_a, rot_b, switch):

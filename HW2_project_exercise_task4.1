@@ -1,0 +1,87 @@
+from filefifo import Filefifo
+import micropython
+micropython.alloc_emergency_exception_buf(200) # Allocate buffer for emergency exception handling
+
+# Initialize Filefifo to read from a file with a buffer size of 10
+data = Filefifo(10, name='capture01_250Hz.txt')
+
+window_size = 10 # Size of the moving average window
+
+chunk_size = 500 # Number of samples to process in each chunk
+
+peaks = [] # List to store detected peaks
+
+hr_values = []  # List to store heart rate values
+
+# To store the last part of the previous chunk for overlap
+previous_chunk_end = []  
+
+alpha = 0.1 # Smoothing factor for exponential moving average
+previous_output = 0 # Initialize previous output for the moving average
+
+
+# Loop through the data in chunks
+for chunk_start in range(0, 6000, chunk_size): # Process chunks of size 'chunk_size' from index 0 to 6000
+    
+    buffer = previous_chunk_end.copy() # Start the buffer with the previous chunk's last part (overlap)
+    
+    chunk_filtered_values = []# List to store filtered values for the current chunk
+
+    # Process each sample in the current chunk
+    for _ in range(chunk_size):
+        value = data.get() # Get the next data value from the Filefifo
+        buffer.append(value) # Add the value to the buffer
+        
+        if len(buffer) >= window_size: # Start filtering once the buffer reaches the window size
+       
+            if len(buffer) > window_size: # If the buffer exceeds the window size, remove the oldest value
+                buffer.pop(0) # Pop the first value to keep the buffer size fixed at window_size
+            
+            avg_value = sum(buffer) / len(buffer)# Calculate the moving average of the values in the buffer
+            
+            # Apply exponential moving average formula
+            output = alpha * avg_value + (1 - alpha) * previous_output
+            previous_output = output  # Update previous output for the next iteration
+           
+            chunk_filtered_values.append(output) # Store the filtered value
+
+
+    # Set a threshold for peak detection based on the minimum and maximum values in the chunk
+    threshold = int((min(chunk_filtered_values) + max(chunk_filtered_values)) / 2)
+
+
+    # Peak detection: check for local maxima in the filtered values
+    for i in range(1, len(chunk_filtered_values) - 1): # Loop through the filtered values (excluding first and last)
+        previous_slope = chunk_filtered_values[i - 1] - chunk_filtered_values[i] # Slope to the previous value
+        next_slope = chunk_filtered_values[i] - chunk_filtered_values[i + 1] # Slope to the next value
+
+        # Check if the current value is a peak (local maxima)
+        if previous_slope <= 0 and next_slope > 0 and chunk_filtered_values[i] > threshold:
+            peak_index = chunk_start + i  # Convert the index to the global index for the entire data
+            peaks.append((peak_index, chunk_filtered_values[i])) # Append the peak index and value to the peaks list
+
+    # Save the last part of the current chunk for overlap in the next chunk
+    previous_chunk_end = buffer[-window_size:]
+
+# Remove the first 5 peaks as they might be unstable
+del peaks[0:10]
+
+
+# Calculate the heart rate based on the peaks detected
+for i in range(len(peaks) - 1): # Loop through the detected peaks
+    num_samples = peaks[i + 1][0] - peaks[i][0] # Calculate the number of samples between two consecutive peaks
+
+    if num_samples > 0: # Ensure the sample distance is positive
+        ppi_seconds = num_samples * 0.004 # Calculate the time between peaks in seconds (0.004 seconds per sample)
+
+        if ppi_seconds > 0: # If the time between peaks is positive
+            hr = 60 / ppi_seconds # Calculate the heart rate in beats per minute (bpm)
+            if 30 <= hr <= 200: # Filter out unrealistic heart rates (e.g., below 30 bpm or above 200 bpm)
+                hr_values.append(hr) # Append the valid heart rate to the hr_values list
+                print(hr) # Print the heart rate value
+
+# Print the total number of heart rates detected
+print("Heart Rates:", len(hr_values))
+print(len(peaks))
+
+           

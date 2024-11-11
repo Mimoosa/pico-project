@@ -2,6 +2,8 @@ from filefifo import Filefifo # To read data from a file in FIFO
 from machine import Pin, I2C # For controlling pins and I2C interface
 from ssd1306 import SSD1306_I2C  # Import the SSD1306 OLED display driver
 from fifo import Fifo
+import micropython
+micropython.alloc_emergency_exception_buf(200) # Allocate buffer for emergency exception handling
 
 # Define a class to manage the rotary encoder and OLED display
 class Encoder:

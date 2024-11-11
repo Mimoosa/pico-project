@@ -1,6 +1,8 @@
 from machine import Pin, PWM  # Import necessary modules for pin control and PWM (Pulse Width Modulation)
 from fifo import Fifo
 import time # Import time module for delay handling
+import micropython
+micropython.alloc_emergency_exception_buf(200) # Allocate buffer for emergency exception handling
  
 # Define the Encoder class to manage the rotary encoder, LED control, and button handling 
 class Encoder:
