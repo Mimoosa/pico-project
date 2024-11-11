@@ -85,7 +85,7 @@ while True:
                     rot.change_brightness_for_led(rot.brightness) # Update LED brightness
             
             else: # If data is 1, increase brightness
-                if rot.brightness < 32700: # Prevent brightness from going too high
+                if rot.brightness < 65000: # Prevent brightness from going too high
                     rot.brightness += data * 20  # Increase brightness by a fixed amount
                     rot.change_brightness_for_led(rot.brightness) # Update LED brightness
              
