@@ -23,20 +23,26 @@ class Encoder:
         # Set up an interrupt for the encoder’s rotation
         self.a.irq(handler=self.turning_encoder_handler, trigger=Pin.IRQ_RISING, hard=True) # Set up interrupt for encoder turns
         
-        self.data_list = [] # List to store data values from file
-        # Load data and find peaks (min and max values)
-        self.create_data_list()
-        self.find_peaks_from_data_list()
+        self.data_list = []  # Raw data list
+        self.scaled_data_list = [] # Scaled data list
+ 
+        self.create_data_list() # Read 1000 values into the list
         
-        self.count_index = 0 # Track current position in the data list
-        self.last_index = 128 # Set the maximum scroll position (end of window)
-        self.window_start = 0 # Starting point of the displayed data window
+        self.min_value = 0 # Initialize minimum value
+        self.max_value = 0 # Initialize maximum value
         
-        # Display initial data window
+        self.find_peaks_and_scale_signals()# Initialize maximum value
+        
+        self.window_start_index = 0 # Starting index for scrolling
+        self.last_index = 1000 # Total number of data points
+        self.window_size = 128 # Number of values to display at a time
+
+        
+        # Display the initial data window on the OLED screen
         self.display_window()
         
   
-    # Define handler for rotary encoder rotation events
+    # Interrupt handler for rotary encoder rotation
     def turning_encoder_handler(self, pin):
         # Check encoder B state to determine rotation direction
         if self.b(): # Counter-clockwise rotation
@@ -48,56 +54,50 @@ class Encoder:
     # Reads 1000 values from the file and stores them in data_list
     def create_data_list(self):
         for _ in range(1000):
-            value = self.data.get() # Retrieve value from Filefifo
-            self.data_list.append(value) # Append value to data_list
+            value = self.data.get() # Read value from Filefifo
+            self.data_list.append(value) # Append value to the data_list
     
-    # Finds the minimum and maximum values in the data list and prints them
-    def find_peaks_from_data_list(self):            
-        min_value = min(self.data_list)# Calculate minimum value
-        print(f"The minimum value from the data is {min_value}.")
+    # Find minimum and maximum values and scale the data for display
+    def find_peaks_and_scale_signals(self):            
+        self.min_value = min(self.data_list)# Find minimum value
+          
+        self.max_value = max(self.data_list) # Find maximum value
         
-        max_value = max(self.data_list) # Calculate maximum value
-        print(f"The maximum value from the data is {max_value}.")
+        for i in self.data_list:
+            # Scale values to fit within the OLED screen's height
+            scaled_value = int(((i - self.min_value) / (self.max_value - self.min_value)) * 100)
+            self.scaled_data_list.append(scaled_value)
     
     
-    # Displays a window of 8 values from data_list on the OLED screen
+    # Displays a window of 128 values on the OLED screen
     def display_window(self):
         
         self.oled.fill(0) # Clear OLED screen
-        y_position = 0 # Initialize Y position for text display
-        
-        # Loop through and display 8 values from data_list within the window
-        for i in range(8):  
-            data_index = self.window_start + i # Calculate index for each value
-            if data_index < 127:  # Ensure we stay within the list range
-                value = self.data_list[data_index] # Retrieve the value
-             
-                self.oled.text(str(value), 0, y_position, 1)  # Display value at the current Y position
-                
-                y_position += 8 # Move down for the next line of text
+        x_position = 0 # Initialize X position for plotting
+      
+        for i in range(self.window_size):
+            current_index = i + self.window_start_index # Calculate the current index in the data
             
-        
-        self.oled.show() # Update OLED display with new content
+            y_position = int(self.scaled_data_list[current_index] * (self.oled_height - 1) / 100) # Scale to OLED height
+            self.oled.pixel(x_position, y_position, 1) # Draw the pixel
+            x_position += 1  # Move to the next X position
+            
+            
+        self.oled.show() # Update OLED display
 
 
     # Updates the scroll position based on rotation direction and displays the window   
     def update_scroll_position(self, direction):
-        # Update scroll window and highlight index based on direction
+   
         if direction == 1:  # Clockwise rotation
-            if self.count_index < self.last_index: # Check to avoid exceeding last index
-                self.count_index += 1 # Move to the next data index
+            if self.window_start_index < self.last_index - self.window_size: # Check to avoid exceeding last index
+                self.window_start_index += 1 
             
-            # Shift window forward if we’ve reached the end of visible values and haven’t reached the end
-            if self.count_index - self.window_start > 7 and self.count_index < 127:
-                self.window_start += 1 # Move window start forward
 
         elif direction == -1:  # Counter-clockwise rotation 
-            if self.count_index  > 0: # Check to avoid going below the start index
-                self.count_index -= 1 # Move to the previous data index
-            
-            # Shift window back if we’re at the beginning of the visible window
-            if self.count_index - self.window_start < 0:
-                self.window_start -= 1 # Move window start back
+            if self.window_start_index  > 0: # Prevent scrolling before the first index
+                self.window_start_index -= 1 
+     
 
         self.display_window() # Refresh the OLED display with updated window
             
@@ -112,4 +112,4 @@ while True:
     if rot.fifo.has_data(): # Check if there’s data in the FIFO queue
       
         direction = rot.fifo.get() # Get the rotation direction from FIFO
-        rot.update_scroll_position(direction) # Update display based on rotation    
+        rot.update_scroll_position(direction) # Update the scroll position and refresh the display   
