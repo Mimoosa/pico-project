@@ -7,7 +7,7 @@ micropython.alloc_emergency_exception_buf(200) # Allocate buffer for emergency e
 
 # Initialize Filefifo to read data from a file with a buffer size of 10
 # The file 'capture01_250Hz.txt' is used as the data source
-data = Filefifo(10, name='capture03_250Hz.txt')
+data = Filefifo(10, name='capture01_250Hz.txt')
 
 # Set up I2C communication for the OLED display
 i2c = I2C(1, scl=Pin(15), sda=Pin(14), freq=400000)
@@ -30,57 +30,36 @@ x = 0
 
 
 
-def filtering_signals():
-    """
-    This function filters the signal using a combination of moving average 
-    and exponential smoothing for a single chunk of data.
-    """
-    buffer = [] # Buffer to store the most recent values for the moving average
-    alpha = 0.1 # Smoothing factor for exponential moving average
-    previous_output = 0 # Initialize the previous output for exponential smoothing
-    filtered_values = [] # List to store the filtered values
-    
-    for _ in range(chunk_size): # Iterate through the number of samples in the chunk
+def get_signals():
+    """Retrieve a chunk of data from the file."""
+    values_list = []
+    for _ in range(chunk_size): # Read 'chunk_size' number of values
         value = data.get() # Get the next data value from the Filefifo
-        buffer.append(value) # Add the value to the buffer
-        
-        if len(buffer) >= window_size: # Start filtering once the buffer reaches the window size
-       
-            if len(buffer) > window_size: # If the buffer exceeds the window size, remove the oldest value
-                buffer.pop(0) # Remove the first value to maintain a fixed window size
-            
-            avg_value = sum(buffer) / len(buffer)# Calculate the moving average of the values in the buffer
-            
-            # Apply exponential moving average formula
-            output = alpha * avg_value + (1 - alpha) * previous_output
-            previous_output = output  # Update previous output for the next iteration
-           
-            filtered_values.append(output) # Store the filtered value
-            
-    return filtered_values
-
+        values_list.append(value) # Add the value to the list
+      
+    return values_list
 
 
 # Process the first chunk to initialize scaling variables
-chunk_filtered_values = filtering_signals()  # Filter the signals for the first chunk   
+chunk_values = get_signals()  # Retrieve the first chunk of data
         
-max_value = max(chunk_filtered_values) # Find the maximum value of the first chunk
+max_value = max(chunk_values) # Find the maximum value of the first chunk
 
-min_value = min(chunk_filtered_values) # Find the minimum value of the first chunk
+min_value = min(chunk_values) # Find the minimum value of the first chunk
 
 # Main loop through the data in chunks
 for chunk_start in range(0, 6000, chunk_size): # Process chunks of size 'chunk_size' from index 0 to 6000
  
     horizontal_scaling_values = [] # Temporary list for horizontal scaling values
     
-    # Filter the signals for the current chunk
-    chunk_filtered_values = filtering_signals()
+    # Retrieve the next chunk of data
+    chunk_values = get_signals()
     
-    # Process each value in the filtered chunk
-    for i in range(len(chunk_filtered_values)):
+    # Iterate through each value in the chunk
+    for i in range(len(chunk_values)):
         
         # Scale the current value to a 0–100 range
-        scaled_value = ((chunk_filtered_values[i] - min_value) / (max_value - min_value)) * 100
+        scaled_value = ((chunk_values[i] - min_value) / (max_value - min_value)) * 100
         horizontal_scaling_values.append(scaled_value)  # Add the scaled value to the horizontal scaling list
         
         # Perform horizontal scaling every 5 values
@@ -113,8 +92,8 @@ for chunk_start in range(0, 6000, chunk_size): # Process chunks of size 'chunk_s
                 
                 oled.fill(0) # Clear the screen for the next frame
     
-    # Update the scaling variables for the next chunk
-    max_value = max(chunk_filtered_values)
+    # Update scaling parameters (min and max values) for the next chunk
+    max_value = max(chunk_values)
 
-    min_value = min(chunk_filtered_values)
+    min_value = min(chunk_values)
                  
