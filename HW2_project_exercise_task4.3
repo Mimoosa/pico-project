@@ -1,0 +1,221 @@
+from filefifo import Filefifo # To read data from a file in FIFO
+from machine import Pin, I2C # For controlling pins and I2C interface
+from ssd1306 import SSD1306_I2C  # Import the SSD1306 OLED display driver
+from fifo import Fifo
+import time # Import time module for timing operations
+import micropython
+micropython.alloc_emergency_exception_buf(200) # Allocate buffer for emergency exception handling
+
+# Define a class to manage the rotary encoder and OLED display
+class Pico:
+    def __init__(self, sw2, sw1, sw0, rot_a, rot_b):
+        # Initialize the rotary encoder pins
+        self.a = Pin(rot_a, mode=Pin.IN, pull=Pin.PULL_UP) # Pin for encoder A
+        self.b = Pin(rot_b, mode=Pin.IN, pull=Pin.PULL_UP) # Pin for encoder B
+        
+        # Initialize switch pins with pull-up resistors
+        self.switch0 = Pin(sw0, mode = Pin.IN, pull = Pin.PULL_UP)
+        self.switch1 = Pin(sw1, mode = Pin.IN, pull = Pin.PULL_UP)
+        self.switch2 = Pin(sw2, mode = Pin.IN, pull = Pin.PULL_UP)
+        
+        # Set up I2C communication for OLED display
+        self.i2c = I2C(1, scl=Pin(15), sda=Pin(14), freq=400000) # Initialize I2C for OLED
+        self.oled_width = 128 # OLED width
+        self.oled_height = 64 # OLED height
+        self.oled = SSD1306_I2C(self.oled_width, self.oled_height, self.i2c) # Create OLED object
+        
+        # Initialize Filefifo to read data from a file
+        self.data = Filefifo(10, name = 'capture01_250Hz.txt') # Data source file
+        self.fifo = Fifo(30, typecode='i') # Create FIFO queue for events
+        
+        # Set up an interrupt for the rotary encoder
+        self.a.irq(handler=self.turning_encoder_handler, trigger=Pin.IRQ_RISING, hard=True) # Set up interrupt for encoder turns
+        
+        # Variables to manage debounce for buttons
+        self.last_press_time_sw1 = 0 # Last press time for SW_1
+        self.last_press_time_sw2 = 0 # Last press time for SW_2
+        self.last_press_time_sw0 = 0 # Last press time for SW_0
+        
+        # Set up an interrupt for SW_1 button press
+        self.switch1.irq(handler=self.switch1_button_pressed_handler, trigger=Pin.IRQ_RISING, hard=True) # Set up interrupt for button press
+       
+       
+        # Lists to store raw, filtered, and scaled data
+        self.data_list = []  # Raw data list
+        self.filtered_data_list = [] # Filtered data list
+        self.scaled_data_list = [] # Scaled data list
+        
+        # Variables to store min/max values for scaling
+        self.min_value = 0 # Initialize minimum value
+        self.max_value = 0 # Initialize maximum value
+        
+        # Variables for scrolling and window management
+        self.window_start_index = 0# Current scroll position
+        self.last_index = 360 # Total number of data points
+        self.window_size = 128 # Number of values to display at a time
+        
+        self.display_instruction() # Show initial instruction on the OLED screen
+        
+
+  
+    # Interrupt handler for rotary encoder rotation
+    def turning_encoder_handler(self, pin):
+        # Determine the direction of rotation based on the state of encoder pin B
+        if self.b(): # Counter-clockwise rotation
+            self.fifo.put(-1) # Put a value to indivate counter-clockwise turn
+            
+        else: # Clockwise rotation
+            self.fifo.put(1) # Put a value to indicate clockwise turn 
+
+
+    # Interrupt handler for SW_1 button press
+    def switch1_button_pressed_handler(self, pin):
+        # Debounce the button to avoid false triggers
+        current_time = time.ticks_ms() # Get the current time in milliseconds
+
+        if current_time - self.last_press_time_sw1 > 50:  # Check if the press interval is greater than 50 ms
+            self.fifo.put(2) # Put a value to indicate SW_1 press
+            
+            self.last_press_time_sw1 = current_time # Update last press time
+    
+    
+    # Method to check if a button was pressed with debounce
+    def other_button_pressed_handler(self, sw_name):
+        current_time = time.ticks_ms() # Get the current time in milliseconds
+        last_press_time = getattr(self, f"last_press_time_{sw_name}")# Get last press time dynamically
+        if current_time - last_press_time > 50:  # Check if the press interval is greater than 50 ms
+            setattr(self, f"last_press_time_{sw_name}", current_time) # Update last press time
+            return True  # Return True if button is pressed
+        return False # Return False otherwise
+        
+
+    # Method to read 1800 values from the file
+    def create_data_list(self):
+        for _ in range(1800):
+            value = self.data.get() # Read value from Filefifo
+            self.data_list.append(value) # Append value to the data_list
+  
+  
+    # Filter raw data to compute averages of 5 successive samples        
+    def filter_signals(self):
+        values = [] # Temporary list to hold values for filtering
+        for i in range(len(self.data_list)):
+            values.append(self.data_list[i])# Add values to the list
+            if len(values) > 5: # When the list exceeds 5 samples
+                filtered_value = sum(values) / len(values)  # Compute the average
+                self.filtered_data_list.append(filtered_value) # Append to filtered data list
+            
+            
+    # Scale the filtered data to a range of 0–100        
+    def scale_signals(self):
+        for i in range(len(self.filtered_data_list)):
+        
+        # Scale the current value to a 0–100 range
+            scaled_value = int(((self.filtered_data_list[i] - self.min_value) / (self.max_value - self.min_value)) * 100)
+            self.scaled_data_list.append(scaled_value)# Append scaled value
+   
+    
+    # Find minimum and maximum values in the filtered data
+    def find_peaks(self):            
+        self.min_value = min(self.filtered_data_list)# Find minimum value
+          
+        self.max_value = max(self.filtered_data_list) # Find maximum value
+   
+   
+    # Display the initial instruction on the OLED screen
+    def display_instruction(self):
+        self.oled.fill(0)  # Clear the OLED screen
+        text = "Press SW1" # Instruction text
+        self.oled.text(text, 0, int(self.oled_height / 2), 1) # Display text centered vertically
+        self.oled.show() # Update the OLED display
+    
+    
+    # Displays a window of 128 values on the OLED screen
+    def display_window(self):
+        
+        self.oled.fill(0) # Clear OLED screen
+        x_position = 0 # Start plotting from the leftmost pixel     
+        for i in range(self.window_size):
+            current_index = i + self.window_start_index # Calculate the index of the current data point
+            
+            y_position = int(self.scaled_data_list[current_index] * (self.oled_height - 1) / 100) # Scale to OLED height
+            self.oled.pixel(x_position, y_position, 1)  # Plot the pixel on the screen
+            x_position += 1  # Move to the next horizontal position
+               
+        self.oled.show() # Update OLED display
+
+
+    # Update the scroll position based on encoder rotation 
+    def update_scroll_position(self, direction): 
+        if direction == 1:  # Clockwise rotation
+            if self.window_start_index < self.last_index - self.window_size: # Check to avoid exceeding last index
+                self.window_start_index += 1 # Increment the start index
+            
+
+        elif direction == -1:  # Counter-clockwise rotation 
+            if self.window_start_index  > 0: # Prevent scrolling before the first index
+                self.window_start_index -= 1 # Decrement the start index
+     
+
+        self.display_window() # Refresh the OLED display with updated window
+ 
+ 
+    # Change the scaling of the displayed values
+    def change_scale(self, direction):
+    
+        if direction == 1:  # Clockwise rotation
+           self.scaled_data_list = [i + i * 0.1 for i in self.scaled_data_list] # Increase values by 10%
+        
+        elif direction == -1:  # Counter-clockwise rotation
+           self.scaled_data_list = [i - i * 0.1 for i in self.scaled_data_list] # Decrease values by 10%
+        
+        self.display_window() # Refresh the OLED display with updated window
+   
+   
+    # Change the offset of the displayed values   
+    def change_offset(self, direction): 
+        if direction == 1:  # Clockwise rotation
+           self.scaled_data_list = [i + 5 for i in self.scaled_data_list] # Increase values by 5        
+        elif direction == -1:  # Counter-clockwise rotation
+           self.scaled_data_list = [i - 5 * 0.1 for i in self.scaled_data_list] # Decrease values by 5
+        
+        self.display_window() # Refresh the OLED display with updated window
+            
+# Instantiate the Pico class with appropriate GPIO pin numbers
+pico = Pico(7, 8, 9, 10, 11)
+
+
+# Main loop to handle events from the FIFO queue
+while True:
+    if pico.fifo.has_data(): # Check if there is data in the FIFO
+        data = pico.fifo.get() # Get the data from the FIFO
+
+        if data == 2: # If SW_1 button press is detected
+            # Clear existing data lists
+            if pico.data_list:
+                pico.data_list.clear()
+            if pico.filtered_data_list:
+                pico.filtered_data_list.clear()
+            if pico.scaled_data_list:
+                pico.scaled_data_list.clear()
+            pico.window_start_index = 0 # Reset the scroll position
+            
+            # Process new data
+            pico.create_data_list()
+            pico.filter_signals()
+            pico.find_peaks()
+            pico.scale_signals()
+            pico.display_window()
+
+        else: # Handle rotary encoder events
+            if not pico.switch2.value(): # If SW_2 is pressed
+                if pico.other_button_pressed_handler("sw2"):
+                    pico.change_scale(data) # Change the scaling   
+            elif not pico.switch0.value(): # If SW_0 is pressed
+                if pico.other_button_pressed_handler("sw0"):
+                    pico.change_offset(data) # Change the offset
+            else:
+                pico.update_scroll_position(data) # Update scroll position
+
+            
+          
