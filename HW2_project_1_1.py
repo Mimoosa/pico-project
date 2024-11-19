@@ -31,14 +31,18 @@ class Pico:
          # Set up an interrupt for SW_1 button press
         self.switch1.irq(handler=self.button_handler, trigger=Pin.IRQ_RISING, hard=True) # Set up interrupt for button press
         self.timer = Piotimer(period=4, mode=Piotimer.PERIODIC, callback=self.read_sensor)
+        
         self.measurement_on = False
        
         self.threshold_90 = 0
         self.thresval = 0.9
-        self.prev_sample = 0
+        
+        self.prev_check = 0
         self.max_value = self.threshold_90
-        self.first_check = 0
-     
+        #self.first_check = 0
+        
+        self.count = 0
+        self.count2 = 0 
         self.peaks = []
         self.hr_values = []
         
@@ -66,26 +70,28 @@ class Pico:
         
     
     def detect_peaks(self, value):
-        
         if value > self.max_value and value > self.threshold_90:
-            
+            #self.count2 += 1
             self.max_value = value
-        if value < self.max_value and value > self.threshold_90:
-            self.first_check = value
-            
-        if value < self.max_value and value > self.threshold_90 and self.first_check > 0:
-            print(self.first_check)
-            print(value)
-            if self.first_check > value:
+        if value < self.max_value and value > self.threshold_90 and self.prev_check == 0:
+            self.prev_check = value
+            #print(f"set prev {self.prev_check} max{self.max_value} th {self.threshold_90}")
+        if value < self.max_value and value > self.threshold_90 and self.prev_check != 0:
+            if self.prev_check > value:
+                #print(f"peak_found: {self.max_value}")
+                self.peaks.append(self.count)
+                self.prev_check = 0
+                self.max_value = self.threshold_90
                 
-                print(f"peak_found: {self.max_value}")
-            self.first_check = 0
-            self.max_value = self.threshold_90
-        
+                # ADD COUNTER VALUE TO SELF.PEAKS
+                # CALCULATE AND PRINT HEARTRATE
+                # RESET COUNTER?
+                self.count = 0
+                # 
 
     def calculate_hr(self):
-        for i in range(len(self.peaks) - 1): # Loop through the detected peaks
-            num_samples = self.peaks[i + 1][0] - self.peaks[i][0] # Calculate the number of samples between two consecutive peaks
+        if len(self.peaks) > 2:
+            num_samples = self.peaks[-1] - self.peaks[-2] # Calculate the number of samples between two consecutive peaks
 
             if num_samples > 0: # Ensure the sample distance is positive
                 ppi_seconds = num_samples * 0.004 # Calculate the time between peaks in seconds (0.004 seconds per sample)
@@ -93,9 +99,11 @@ class Pico:
                 if ppi_seconds > 0: # If the time between peaks is positive
                     hr = 60 / ppi_seconds # Calculate the heart rate in beats per minute (bpm)
                    
-                    self.hr_values.append(hr) # Append the valid heart rate to the hr_values list
-                    print(hr) # Print the heart rate value
-   
+                    #self.hr_values.append(hr) # Append the valid heart rate to the hr_values list
+                    if hr > 60 and hr < 100:
+                        print(hr) # Print the heart rate value
+                        self.peaks = self.peaks[-1:]
+
    
     # Display the initial instruction on the OLED screen
     def display_instruction(self):
@@ -132,6 +140,7 @@ class Pico:
 pico = Pico(8, 27)
 pico.display_instruction() # Show initial instruction on the OLED screen
 
+
 # Main loop to handle events from the FIFO queue
 while True:
     if pico.button_fifo.has_data():
@@ -140,6 +149,7 @@ while True:
         if button_data == 2: # If SW_1 button press is detected
             if pico.measurement_on:
                 pico.measurement_on = False
+                pico.count = 0
             else:
                 pico.measurement_on = True
 
@@ -148,11 +158,10 @@ while True:
         sample = pico.sensor_fifo.get() # Get the data from the FIFO
     
         if pico.measurement_on == True:
-            pico.set_threshold()
-            #pico.detect_peaks()
-            #print(sample)
-            #if sample > pico.threshold_90:
-                #print(f"over th")
-            #else:
-                #print("under th")
+            pico.count += 1
+            if pico.count == 1 or pico.count % 125 == 0:
+                pico.set_threshold()
+          
             pico.detect_peaks(sample)
+            if pico.count % 250 == 0:
+                pico.calculate_hr()
