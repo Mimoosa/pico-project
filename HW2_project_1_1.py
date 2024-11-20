@@ -1,18 +1,19 @@
 from machine import ADC, Pin, I2C # For controlling pins and I2C interface
-from piotimer import Piotimer
+from piotimer import Piotimer  # Timer for periodic operations
 from ssd1306 import SSD1306_I2C  # Import the SSD1306 OLED display driver
-from fifo import Fifo
+from fifo import Fifo # FIFO queue for buffering data
 import time # Import time module for timing operations
-import micropython
+import micropython # MicroPython utilities
 micropython.alloc_emergency_exception_buf(200) # Allocate buffer for emergency exception handling
 
-# Define a class to manage the rotary encoder and OLED display
+# Define a class to manage the heart rate monitoring device
 class Pico:
     def __init__(self, sw1_pin, sensor_pin):
         
         
         # Initialize switch pins with pull-up resistors
         self.switch1 = Pin(sw1_pin, mode = Pin.IN, pull = Pin.PULL_UP)
+        # Initialize the ADC for the heart rate sensor
         self.sensor = ADC(Pin(sensor_pin))
         
         # Set up I2C communication for OLED display
@@ -21,30 +22,29 @@ class Pico:
         self.oled_height = 64 # OLED height
         self.oled = SSD1306_I2C(self.oled_width, self.oled_height, self.i2c) # Create OLED object
         
-        # Initialize Filefifo to read data from a file
-        self.button_fifo = Fifo(30, typecode='i') # Create FIFO queue for events
-        self.sensor_fifo = Fifo(1000, typecode='i') # Create FIFO queue for data events
+         # Set up an interrupt for button presses
+        self.button_fifo = Fifo(30, typecode='i') # FIFO for button events
+        self.sensor_fifo = Fifo(1000, typecode='i') # FIFO for sensor readings
         
         # Variables to manage debounce for buttons
         self.last_press_time_sw1 = 0 # Last press time for SW_1
 
-         # Set up an interrupt for SW_1 button press
+        # Set up an interrupt for SW_1 button press
         self.switch1.irq(handler=self.button_handler, trigger=Pin.IRQ_RISING, hard=True) # Set up interrupt for button press
-        self.timer = Piotimer(period=4, mode=Piotimer.PERIODIC, callback=self.read_sensor)
         
-        self.measurement_on = False
-       
-        self.threshold_90 = 0
-        self.thresval = 0.9
+         # Set up a timer to read sensor data periodically
+        self.sensor_timer = Piotimer(period=4, mode=Piotimer.PERIODIC, callback=self.read_sensor)
         
-        self.prev_check = 0
-        self.max_value = self.threshold_90
-        #self.first_check = 0
-        
-        self.count = 0
-        self.count2 = 0 
-        self.peaks = []
-        self.hr_values = []
+        # Initialize measurement-related variables
+        self.measurement_on = False# Flag to indicate if measurement is active
+        self.threshold = 0 # Peak detection threshold
+        self.thresval = 0.9 # Relative threshold multiplier
+        self.max_value = self.threshold # Maximum sensor value for peak detection
+        self.count = 0 # Counter for samples
+        self.peaks = [] # List of detected peak positions
+        self.hr_display_flag = False # Flag for updating the OLED screen
+        self.hr_values = [] # List of calculated heart rate values
+        self.hr_value = 0 # Current heart rate value to display
         
 
     # Interrupt handler for SW_1 button press
@@ -56,42 +56,29 @@ class Pico:
             self.button_fifo.put(2) # Put a value to indicate SW_1 press
             
             self.last_press_time_sw1 = current_time # Update last press time 
-            
-    def read_sensor(self, timer):    
-        value = self.sensor.read_u16()
-        self.sensor_fifo.put(value)
-   
-    # Find minimum and maximum values in the filtered data
-    def set_threshold(self):
-        h = max(self.sensor_fifo.data) - min(self.sensor_fifo.data)
-        self.threshold_90 = min(self.sensor_fifo.data) + self.thresval * h
-       
-        #self.threshold = int((min(self.sensor_fifo.data) + max(self.sensor_fifo.data)) / 2)
-        
     
+    # Timer callback to read sensor data and store it in the FIFO
+    def read_sensor(self, timer):    
+        value = self.sensor.read_u16() # Read 16-bit ADC value
+        self.sensor_fifo.put(value) # Add value to the FIFO
+   
+    # Calculate the threshold for peak detection
+    def set_threshold(self):
+        h = max(self.sensor_fifo.data) - min(self.sensor_fifo.data) # Calculate range
+        self.threshold = min(self.sensor_fifo.data) + self.thresval * h # Set threshold
+       
+    # Detect peaks in the filtered signal   
     def detect_peaks(self, value):
-        if value > self.max_value and value > self.threshold_90:
-            #self.count2 += 1
-            self.max_value = value
-        if value < self.max_value and value > self.threshold_90 and self.prev_check == 0:
-            self.prev_check = value
-            #print(f"set prev {self.prev_check} max{self.max_value} th {self.threshold_90}")
-        if value < self.max_value and value > self.threshold_90 and self.prev_check != 0:
-            if self.prev_check > value:
-                #print(f"peak_found: {self.max_value}")
-                self.peaks.append(self.count)
-                self.prev_check = 0
-                self.max_value = self.threshold_90
-                
-                # ADD COUNTER VALUE TO SELF.PEAKS
-                # CALCULATE AND PRINT HEARTRATE
-                # RESET COUNTER?
-                self.count = 0
-                # 
-
+        if value > self.max_value:
+            self.max_value = value # Update maximum value
+        elif value < self.threshold and self.max_value > self.threshold: # Check for peaks
+            self.peaks.append(self.count) # Record peak position
+            self.max_value = self.threshold # Reset max value
+     
+    # Calculate heart rate from detected peaks
     def calculate_hr(self):
         if len(self.peaks) > 2:
-            num_samples = self.peaks[-1] - self.peaks[-2] # Calculate the number of samples between two consecutive peaks
+            num_samples = self.peaks[-1] - self.peaks[-2] # Time difference between peaks
 
             if num_samples > 0: # Ensure the sample distance is positive
                 ppi_seconds = num_samples * 0.004 # Calculate the time between peaks in seconds (0.004 seconds per sample)
@@ -99,10 +86,10 @@ class Pico:
                 if ppi_seconds > 0: # If the time between peaks is positive
                     hr = 60 / ppi_seconds # Calculate the heart rate in beats per minute (bpm)
                    
-                    #self.hr_values.append(hr) # Append the valid heart rate to the hr_values list
-                    if hr > 60 and hr < 100:
+                    if hr > 60 and hr < 100: # Only consider valid heart rates
+                        self.hr_values.append(hr) # Append the valid heart rate to the hr_values list
                         print(hr) # Print the heart rate value
-                        self.peaks = self.peaks[-1:]
+                        self.peaks = self.peaks[-1:] # Keep only the latest peak
 
    
     # Display the initial instruction on the OLED screen
@@ -115,53 +102,77 @@ class Pico:
         self.oled.text(line1, 0, int(self.oled_height / 2) - 20, 1) # Display text centered vertically
         self.oled.text(line2, 0, int(self.oled_height / 2) - 10, 1)
         self.oled.text(line3, 0, int(self.oled_height / 2), 1)
-        self.oled.text(line4, 0, int(self.oled_height / 2) + 10, 1)
-        
+        self.oled.text(line4, 0, int(self.oled_height / 2) + 10, 1)    
+        self.oled.show() # Update the OLED display
+     
+    # Display instructions to stop measurement
+    def display_instruction2(self):
+        self.oled.fill(0) # Clear OLED screen
+        instruction_line1 = "PRESS THE BUTTON"
+        instruction_line2 = "TO STOP"
+        self.oled.text(instruction_line1, 0, int(self.oled_height / 2) + 10, 1)
+        self.oled.text(instruction_line2, 0, int(self.oled_height / 2) + 20, 1)
         self.oled.show() # Update the OLED display
     
     
-    # Displays a window of 128 values on the OLED screen
-    def display_window(self):
-        
-        self.oled.fill(0) # Clear OLED screen
-        x_position = 0 # Start plotting from the leftmost pixel     
-        for i in range(self.window_size):
-            current_index = i + self.window_start_index # Calculate the index of the current data point
+    
+    def display_hr_flag(self, timer):
+        if self.hr_values:  # Check if there are any calculated heart rate values in the hr_values list.
+            self.hr_display_flag = True  # Set the flag to True to indicate the display needs to be updated.
             
-            y_position = int(self.scaled_data_list[current_index] * (self.oled_height - 1) / 100) # Scale to OLED height
-            self.oled.pixel(x_position, y_position, 1)  # Plot the pixel on the screen
-            x_position += 1  # Move to the next horizontal position
-               
-        self.oled.show() # Update OLED display
+        
+    # Update the OLED with the current heart rate
+    def display_hr(self):
+        self.oled.fill_rect(0, int(self.oled_height / 2) - 10, self.oled_width, 20, 0) # Clear previous text 
+    
+        hr_value_line = f"{self.hr_value} BPM" # Display heart rate
+       
+        self.oled.text(hr_value_line, 0, int(self.oled_height / 2) - 10, 1) # Display heart rate
+        
+        self.oled.show() # Update the OLED display
 
+        
 
             
 # Instantiate the Pico class with appropriate GPIO pin numbers
 pico = Pico(8, 27)
-pico.display_instruction() # Show initial instruction on the OLED screen
+pico.display_instruction() # Show the initial instruction screen
+# Set a timer to update the OLED display every 5 seconds
+screen_timer = Piotimer(period=5000, mode=Piotimer.PERIODIC, callback=pico.display_hr_flag)
 
-
-# Main loop to handle events from the FIFO queue
+# Main loop to process events and update heart rate
 while True:
+    # Handle button press events
     if pico.button_fifo.has_data():
         button_data = pico.button_fifo.get()
         
         if button_data == 2: # If SW_1 button press is detected
             if pico.measurement_on:
                 pico.measurement_on = False
-                pico.count = 0
+                
             else:
                 pico.measurement_on = True
+                pico.count = 0 # Reset counter
 
-        
+    # Handle sensor data processing    
     if pico.sensor_fifo.has_data(): # Check if there is data in the FIFO
         sample = pico.sensor_fifo.get() # Get the data from the FIFO
-    
+        
         if pico.measurement_on == True:
+        
             pico.count += 1
+            if pico.count == 1:
+                pico.display_instruction2() # Show stop instructions
             if pico.count == 1 or pico.count % 125 == 0:
-                pico.set_threshold()
+                pico.set_threshold()# Update threshold
           
-            pico.detect_peaks(sample)
+            pico.detect_peaks(sample)# Detect peaks
+            
             if pico.count % 250 == 0:
-                pico.calculate_hr()
+                pico.calculate_hr() # Calculate heart rate
+            
+            if pico.hr_display_flag:
+                pico.hr_value = int(pico.hr_values[-1]) # Get the latest heart rate
+                pico.display_hr() # Update OLED
+                pico.hr_display_flag = False # Reset display flag
+                
