@@ -149,10 +149,12 @@ while True:
         if button_data == 2: # If SW_1 button press is detected
             if pico.measurement_on:
                 pico.measurement_on = False
+                pico.count = 0 # Reset counter
+                pico.display_instruction()
                 
             else:
                 pico.measurement_on = True
-                pico.count = 0 # Reset counter
+                
 
     # Handle sensor data processing    
     if pico.sensor_fifo.has_data(): # Check if there is data in the FIFO
