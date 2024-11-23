@@ -69,6 +69,7 @@ class Pico:
        
     # Detect peaks in the filtered signal   
     def detect_peaks(self, value):
+        
         if value > self.max_value:
             self.max_value = value # Update maximum value
         elif value < self.threshold and self.max_value > self.threshold: # Check for peaks
@@ -170,7 +171,7 @@ while True:
           
             pico.detect_peaks(sample)# Detect peaks
             
-            if pico.count % 250 == 0:
+            if pico.count % 500 == 0:
                 pico.calculate_hr() # Calculate heart rate
             
             if pico.hr_display_flag:
