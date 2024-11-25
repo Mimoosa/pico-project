@@ -39,12 +39,13 @@ class Pico:
         self.measurement_on = False# Flag to indicate if measurement is active
         self.threshold = 0 # Peak detection threshold
         self.thresval = 0.9 # Relative threshold multiplier
-        self.max_value = self.threshold # Maximum sensor value for peak detection
+        self.max_value = 0 # Maximum sensor value for peak detection
         self.count = 0 # Counter for samples
         self.peaks = [] # List of detected peak positions
         self.hr_display_flag = False # Flag for updating the OLED screen
         self.hr_values = [] # List of calculated heart rate values
         self.hr_value = 0 # Current heart rate value to display
+   
         
 
     # Interrupt handler for SW_1 button press
@@ -66,7 +67,9 @@ class Pico:
     def set_threshold(self):
         h = max(self.sensor_fifo.data) - min(self.sensor_fifo.data) # Calculate range
         self.threshold = min(self.sensor_fifo.data) + self.thresval * h # Set threshold
-       
+        self.max_value = self.threshold # Initialize max_value
+        
+        
     # Detect peaks in the filtered signal   
     def detect_peaks(self, value):
         
@@ -75,6 +78,11 @@ class Pico:
         elif value < self.threshold and self.max_value > self.threshold: # Check for peaks
             self.peaks.append(self.count) # Record peak position
             self.max_value = self.threshold # Reset max value
+    
+    # Clear the sensor FIFO by consuming all data        
+    def empty_sensor_fifo(self):
+        while self.sensor_fifo.has_data():
+            self.sensor_fifo.get()
      
     # Calculate heart rate from detected peaks
     def calculate_hr(self):
@@ -87,7 +95,7 @@ class Pico:
                 if ppi_seconds > 0: # If the time between peaks is positive
                     hr = 60 / ppi_seconds # Calculate the heart rate in beats per minute (bpm)
                    
-                    if hr > 60 and hr < 100: # Only consider valid heart rates
+                    if hr > 30 and hr < 200: # Only consider valid heart rates
                         self.hr_values.append(hr) # Append the valid heart rate to the hr_values list
                         print(hr) # Print the heart rate value
                         self.peaks = self.peaks[-1:] # Keep only the latest peak
@@ -143,18 +151,22 @@ screen_timer = Piotimer(period=5000, mode=Piotimer.PERIODIC, callback=pico.displ
 
 # Main loop to process events and update heart rate
 while True:
+    if not pico.measurement_on:
+        pico.empty_sensor_fifo() # Clear FIFO if measurement is off
+        
     # Handle button press events
     if pico.button_fifo.has_data():
         button_data = pico.button_fifo.get()
         
         if button_data == 2: # If SW_1 button press is detected
             if pico.measurement_on:
-                pico.measurement_on = False
+                pico.measurement_on = False # Stop measurement
                 pico.count = 0 # Reset counter
-                pico.display_instruction()
+                pico.display_instruction() # Show initial instruction
+                pico.empty_sensor_fifo() # Clear FIFO
                 
             else:
-                pico.measurement_on = True
+                pico.measurement_on = True # Start measurement
                 
 
     # Handle sensor data processing    
@@ -162,20 +174,25 @@ while True:
         sample = pico.sensor_fifo.get() # Get the data from the FIFO
         
         if pico.measurement_on == True:
-        
+            
             pico.count += 1
             if pico.count == 1:
-                pico.display_instruction2() # Show stop instructions
-            if pico.count == 1 or pico.count % 125 == 0:
-                pico.set_threshold()# Update threshold
-          
-            pico.detect_peaks(sample)# Detect peaks
+                pico.display_instruction2() # Show stop instruction
+            if pico.count < 750:
+                pico.empty_sensor_fifo() # Ignore initial noise
             
-            if pico.count % 500 == 0:
-                pico.calculate_hr() # Calculate heart rate
-            
-            if pico.hr_display_flag:
-                pico.hr_value = int(pico.hr_values[-1]) # Get the latest heart rate
-                pico.display_hr() # Update OLED
-                pico.hr_display_flag = False # Reset display flag
+            if pico.count >= 1000:
+                if pico.count == 1000:
+                    pico.set_threshold()# Set threshold for peak detection
+                    print(pico.threshold)
+             
+                pico.detect_peaks(sample)# Detect peaks
                 
+                if pico.count % 500 == 0:
+                    pico.calculate_hr() # Calculate heart rate
+                
+                if pico.hr_display_flag:
+                    pico.hr_value = int(pico.hr_values[-1]) # Get the latest heart rate
+                    pico.display_hr() # Update OLED
+                    pico.hr_display_flag = False # Reset display flag
+            
