@@ -55,7 +55,7 @@ class Pico:
         self.screen_timer = None # Timer for screen updates  
         self.threshold = 0 # Peak detection threshold
         self.thresval = 0.9 # Relative threshold multiplier
-        self.max_value = 0 # Maximum sensor value for peak detection
+        self.max_value = self.threshold # Maximum sensor value for peak detection
         self.count = 0 # Counter for samples
         self.peaks = [] # List of detected peak positions
         self.hr_display_flag = False # Flag for updating the OLED screen
@@ -66,9 +66,9 @@ class Pico:
         self.PASSWORD = "MMN8MMN8"
         self.BROKER_IP = "192.168.8.253"
         self.wlan = None
-        #self.connect_wlan()
+        self.connect_wlan()
         self.mqtt_client = None
-        #self.connect_mqtt()
+        self.connect_mqtt()
         self.json_message = None
 
 
@@ -145,11 +145,6 @@ class Pico:
         self.oled.text(instruction_line2, 0, int(self.oled_height / 2) + 20, 1)
         self.oled.show() # Update the OLED display
         
-    # Clear the sensor FIFO by consuming all data        
-    def empty_sensor_fifo(self):
-        while self.sensor_fifo.has_data():
-            self.sensor_fifo.get()
-        
     
     # Timer callback to read sensor data and store it in the FIFO
     def read_sensor(self, timer):    
@@ -161,7 +156,6 @@ class Pico:
     def set_threshold(self):
         h = max(self.sensor_fifo.data) - min(self.sensor_fifo.data) # Calculate range
         self.threshold = min(self.sensor_fifo.data) + self.thresval * h # Set threshold
-        self.max_value = self.threshold # Initialize max_value
         
     
     # Detect peaks in the filtered signal   
@@ -170,6 +164,7 @@ class Pico:
             self.max_value = value # Update maximum value
         elif value < self.threshold and self.max_value > self.threshold: # Check for peaks
             self.peaks.append(self.count) # Record peak position
+            print(f"peak_sample: {self.count}")
             self.max_value = self.threshold # Reset max value
             
             
@@ -269,7 +264,7 @@ class Pico:
         print(f"RMSSD: {rmssd}")
         print(f"SDNN: {sdnn}")
         
-        #self.send_mqtt_message()
+        self.send_mqtt_message()
         
     
     def send_mqtt_message(self):
@@ -313,8 +308,6 @@ pico.display_menu()
 
 # Main loop to process events and update heart rate
 while True:
-    if not pico.measurement_on:
-        pico.empty_sensor_fifo() # Clear FIFO if measurement is off
 
     # Handle events from the rotary encoder (turns and button press)
     if pico.encoder_fifo.has_data():
@@ -345,7 +338,6 @@ while True:
                 pico.display_menu() # Return to the main menu
                 pico.peaks = [] # Clear the list of detected peaks
                 pico.hr_values = []  # Clear the heart rate values
-                pico.empty_sensor_fifo() # Clear FIFO
                 
                 if pico.highlight == 0: # If in heart rate measurement mode
                     if pico.screen_timer:  # Check if screen_timer exists
@@ -372,27 +364,22 @@ while True:
                     pico.display_instruction_HR() # Show stop instructions
                     if not pico.screen_timer:  # Avoid creating multiple timers
                         pico.set_screen_timer() # Set a screen update timer
+                        
+            if pico.count == 1 or pico.count % 125 == 0: # Every 125 samples or on the first sample
+                pico.set_threshold()# Update threshold 
+           
+            pico.detect_peaks(sample)# Detect peaks
+                
+            if pico.count % 500 == 0: # Every 500 samples
+                pico.calculate_hr() # Calculate heart rate
+
+            if pico.highlight == 0: # If in heart rate measurement mode
+                if pico.hr_display_flag: # Check if the OLED needs updating
+                    pico.hr_value = int(pico.hr_values[-1]) # Get the latest heart rate
+                    pico.display_hr() # Update OLED display with the heart rate
+                    pico.hr_display_flag = False # Reset display flag
             
-            if pico.count < 750:
-                pico.empty_sensor_fifo() # Ignore initial noise
-
-            if pico.count >= 1000:
-                if pico.count == 1000:
-                    pico.set_threshold()# Set threshold for peak detection
-                    print(pico.threshold) 
-
-                pico.detect_peaks(sample)# Detect peaks
-                    
-                if pico.count % 500 == 0: # Every 500 samples
-                    pico.calculate_hr() # Calculate heart rate
-
-                if pico.highlight == 0: # If in heart rate measurement mode
-                    if pico.hr_display_flag: # Check if the OLED needs updating
-                        pico.hr_value = int(pico.hr_values[-1]) # Get the latest heart rate
-                        pico.display_hr() # Update OLED display with the heart rate
-                        pico.hr_display_flag = False # Reset display flag
-                    
-                elif pico.highlight == 1: # If in HRV analysis mode
-                    if pico.count == 8500: # After 30 seconds of data collection 
-                        pico.calculate_hrv() # Calculate HRV metrics (Mean HR, Mean PPI, RMSSD, SDNN)
+            elif pico.highlight == 1: # If in HRV analysis mode
+                if pico.count == 7500: # After 30 seconds of data collection (7500 samples at 250Hz)
+                    pico.calculate_hrv() # Calculate HRV metrics (Mean HR, Mean PPI, RMSSD, SDNN)
                

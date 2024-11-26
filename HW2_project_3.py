@@ -32,7 +32,7 @@ class Pico:
         
         # Initialize FIFO queues for button, sensor, and encoder events
         self.button_fifo = Fifo(30, typecode='i') # FIFO for button events
-        self.sensor_fifo = Fifo(1000, typecode='i') # FIFO for sensor readings
+        self.sensor_fifo = Fifo(500, typecode='i') # FIFO for sensor readings
         self.encoder_fifo = Fifo(30, typecode='i') # FIFO for encoder events
         
         # Variables to manage debounce for buttons
@@ -386,9 +386,9 @@ while True:
                 pico.empty_sensor_fifo() # Ignore initial noise
 
             if pico.count >= 1000:
-                if pico.count == 1000:
+                if pico.count == 1000 or pico.count % 125 == 0:
                     pico.set_threshold()# Set threshold for peak detection
-                    print(pico.threshold) 
+                     
 
                 pico.detect_peaks(sample)# Detect peaks
                     

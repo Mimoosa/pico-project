@@ -24,7 +24,7 @@ class Pico:
         
          # Set up an interrupt for button presses
         self.button_fifo = Fifo(30, typecode='i') # FIFO for button events
-        self.sensor_fifo = Fifo(1000, typecode='i') # FIFO for sensor readings
+        self.sensor_fifo = Fifo(500, typecode='i') # FIFO for sensor readings
         
         # Variables to manage debounce for buttons
         self.last_press_time_sw1 = 0 # Last press time for SW_1
@@ -182,7 +182,7 @@ while True:
                 pico.empty_sensor_fifo() # Ignore initial noise
             
             if pico.count >= 1000:
-                if pico.count == 1000:
+                if pico.count == 1000 or pico.count % 125 == 0:
                     pico.set_threshold()# Set threshold for peak detection
                     print(pico.threshold)
              
