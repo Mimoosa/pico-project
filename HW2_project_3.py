@@ -70,7 +70,7 @@ class Pico:
         #self.connect_wlan()
         self.mqtt_client = None
         #self.connect_mqtt()
-        self.json_message = None
+        self.json_message = {}
         self.APIKEY = "pbZRUi49X48I56oL1Lq8y8NDjq6rPfzX3AQeNo3a"  
         self.CLIENT_ID = "3pjgjdmamlj759te85icf0lucv"  
         self.CLIENT_SECRET = "111fqsli1eo7mejcrlffbklvftcnfl4keoadrdv1o45vt9pndlef"   
@@ -78,11 +78,7 @@ class Pico:
         self.TOKEN_URL = "https://kubioscloud.auth.eu-west-1.amazoncognito.com/oauth2/token"  
         self.REDIRECT_URI = "https://analysis.kubioscloud.com/v1/portal/login"
         self.kubios_response = {}
-        self.pns_heart = None
-        self.sns_heart = None
-        
-        
-
+  
 
     def turning_encoder_handler(self, pin):
         # Handler for rotary encoder turn events
@@ -238,8 +234,8 @@ class Pico:
     def calculate_rmssd(self):
         # Calculate RMSSD (Root Mean Square of Successive Differences)
         differences = [] # List to store successive differences
-        for i in range(len(self.ppi_values) - 1): 
-            difference = self.ppi_values[i + 1] - self.ppi_values[i] # Calculate the difference between consecutive PPI values
+        for i in range(len(self.ppi_intervals) - 1): 
+            difference = self.ppi_intervals[i + 1] - self.ppi_intervals[i] # Calculate the difference between consecutive PPI values
             differences.append(difference) # Store the difference
         
         squared_differences = [] # Square the differences
@@ -258,8 +254,8 @@ class Pico:
         
         # Calculate squared differences from the mean PPI
         differences = []
-        for i in range(len(self.ppi_values)):
-            difference = m_ppi - self.ppi_values[i]
+        for i in range(len(self.ppi_intervals)):
+            difference = m_ppi - self.ppi_intervals[i]
             differences.append(difference ** 2)
         # Calculate the average of the squared differences
         avg_differences = sum(differences) / len(differences)
@@ -286,8 +282,9 @@ class Pico:
         print(f"RMSSD: {rmssd}")
         print(f"SDNN: {sdnn}")
         
-        if pico.option == 1:
-            self.send_mqtt_message()
+        
+        #self.send_mqtt_message()
+        self.save_data(measurement)
         
     
     def send_mqtt_message(self):
@@ -351,36 +348,56 @@ class Pico:
         pns = response["analysis"]["pns_index"]
         sns = response["analysis"]["sns_index"]
         
-        self.kubios_response = {"k_mean_hr": mean_hr, "k_mean_ppi": mean_ppi, "k_rmssd": rmssd, "k_sdnn": sdnn, "k_pns": f"{pns:.3f}", "k_sns": f"{sns:.3f}",}
+        
         if pns < -1 :
-            self.pns_heart = "+"
+            pns_level = "+"
         elif pns > -1 and pns < 1:
-            self.pns_heart = "++"
+            pns_level = "++"
         elif pns > 1:
-            self.pns_heart = "+++"
+            pns_level = "+++"
             
         if sns < -1 :
-            self.sns_heart = "+++"
+            sns_level = "+++"
         elif sns > -1 and sns < 1:
-            self.sns_heart = "++"
+            sns_level = "++"
         elif sns > 1:
-            self.sns_heart = "+"
-            
+            sns_level = "+"
+        
+        pns_value = f"{pns:.3f}"
+        
+        sns_value = f"{sns:.3f}"
+        
+        self.kubios_response = {"k_mean_hr": mean_hr, "k_mean_ppi": mean_ppi, "k_rmssd": rmssd, "k_sdnn": sdnn, "k_pns": pns_value + " " + pns_level, "k_sns":  sns_value + " " + sns_level,}
             
         if self.kubios_response:
             self.display_kubios_response()
+            self.save_data(self.kubios_response)
+            
+    def save_data(self, data):
+        with open('history.txt', 'a') as file:
+            file.write(f"{ujson.dumps(data)}\n")
+            
+        with open('history.txt', 'r') as file:
+            lines = file.readlines()
+        
+        if len(lines) > 3:
+        
+            latest_three = lines[-3:]
+            
+            with open('history.txt', 'w') as file:
+                file.writelines(latest_three)
         
         
     def display_kubios_response(self):
         # Display instructions for stopping heart rate measurement
         y_position = 0
         self.oled.fill(0) # Clear OLED screen
-        hr_line = f"MEAN HR: {self.kubios_response["k_mean_hr"]}"
-        ppi_line = f"MEAN PPI: {self.kubios_response["k_mean_ppi"]}"
-        rmssd_line = f"RMSSD: {self.kubios_response["k_rmssd"]}"
-        sdnn_line = f"SDNN: {self.kubios_response["k_sdnn"]}"
-        sns_line = f"SNS: {self.kubios_response["k_sns"]} {self.sns_heart}"
-        pns_line = f"PNS: {self.kubios_response["k_pns"]} {self.pns_heart}"
+        hr_line = f"MEAN HR: {self.kubios_response['k_mean_hr']}"
+        ppi_line = f"MEAN PPI: {self.kubios_response['k_mean_ppi']}"
+        rmssd_line = f"RMSSD: {self.kubios_response['k_rmssd']}"
+        sdnn_line = f"SDNN: {self.kubios_response['k_sdnn']}"
+        sns_line = f"SNS: {self.kubios_response['k_sns']}"
+        pns_line = f"PNS: {self.kubios_response['k_pns']}"
         
         response_list = [hr_line, ppi_line, rmssd_line, sdnn_line, sns_line, pns_line]
         
@@ -402,9 +419,6 @@ pico.display_menu()
 
 # Main loop to process events and update heart rate
 while True:
-    if not pico.measurement_on:
-        pico.empty_sensor_fifo() # Clear FIFO if measurement is off
-
     # Handle events from the rotary encoder (turns and button press)
     if pico.encoder_fifo.has_data():
         encoder_data = pico.encoder_fifo.get() # Get the data from the FIFO
@@ -446,6 +460,9 @@ while True:
                         
                 elif pico.option == 1 or pico.option == 2: # If in HRV analysis or Kubios mode
                     pico.ppi_values = [] # Clear the PPI values
+                    
+                elif pico.option == 1:
+                    pico.json_message = {}
                     
                 elif pico.option == 2:
                     pico.kubios_response = {}
@@ -490,7 +507,7 @@ while True:
                         pico.display_hr() # Update OLED display with the heart rate
                         pico.hr_display_flag = False # Reset display flag
                     
-                elif pico.option == 1: # If in HRV analysis mode
+                elif pico.option == 1 and not pico.json_message: # If in HRV analysis mode
                     if pico.count > 8750:
                         pico.calculate_hrv() # Calculate HRV metrics (Mean HR, Mean PPI, RMSSD, SDNN)
                         
