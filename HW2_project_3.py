@@ -9,6 +9,7 @@ import network
 from time import sleep
 from umqtt.simple import MQTTClient
 import ujson
+import urequests as requests 
 
 
 # Define a class to manage the heart rate monitoring device
@@ -50,7 +51,7 @@ class Pico:
         self.encoder_switch.irq(handler=self.button_handler_encoder, trigger=Pin.IRQ_RISING, hard=True) # Encoder button press
         
         # Initialize various states and measurement variables
-        self.highlight = 0 # Initialize highlighted menu item
+        self.option = 0 # Initialize highlighted menu item
         self.measurement_on = False# Flag to indicate if measurement is active
         self.screen_timer = None # Timer for screen updates  
         self.threshold = 0 # Peak detection threshold
@@ -61,7 +62,7 @@ class Pico:
         self.hr_display_flag = False # Flag for updating the OLED screen
         self.hr_values = [] # List of calculated heart rate values
         self.hr_value = 0 # Current heart rate value to display
-        self.ppi_values = []  # List of Peak-to-Peak Intervals (PPI)
+        self.ppi_intervals = []  # List of Peak-to-Peak Intervals (PPI)
         self.SSID = "KME751_Group_8"
         self.PASSWORD = "MMN8MMN8"
         self.BROKER_IP = "192.168.8.253"
@@ -70,6 +71,17 @@ class Pico:
         self.mqtt_client = None
         #self.connect_mqtt()
         self.json_message = None
+        self.APIKEY = "pbZRUi49X48I56oL1Lq8y8NDjq6rPfzX3AQeNo3a"  
+        self.CLIENT_ID = "3pjgjdmamlj759te85icf0lucv"  
+        self.CLIENT_SECRET = "111fqsli1eo7mejcrlffbklvftcnfl4keoadrdv1o45vt9pndlef"   
+        self.LOGIN_URL = "https://kubioscloud.auth.eu-west-1.amazoncognito.com/login"  
+        self.TOKEN_URL = "https://kubioscloud.auth.eu-west-1.amazoncognito.com/oauth2/token"  
+        self.REDIRECT_URI = "https://analysis.kubioscloud.com/v1/portal/login"
+        self.kubios_response = {}
+        self.pns_heart = None
+        self.sns_heart = None
+        
+        
 
 
     def turning_encoder_handler(self, pin):
@@ -107,7 +119,7 @@ class Pico:
      
         
         for i in range(4):
-            if i == self.highlight: # Highlight the selected option
+            if i == self.option: # Highlight the selected option
                 self.oled.fill_rect(0, y_position, self.oled_width, 8, 1) # Draw highlight rectangle
                 self.oled.text(options[i], 0, y_position, 0) # Display highlighted option in black color
 
@@ -192,9 +204,9 @@ class Pico:
                         
                         
                         self.peaks = self.peaks[-1:] # Keep only the latest peak
-                        if self.highlight == 1: # If the HRV analysis menu is selected
-                            self.ppi_values.append(ppi_seconds*1000) # Store the PPI value in milliseconds
-                            print(self.ppi_values) # Print the PPI values
+                        if self.option == 1 or self.option == 2: # If the HRV analysis or the Kubios menu is selected
+                            self.ppi_intervals.append(int(ppi_seconds*1000)) # Store the PPI value in milliseconds
+                        
     
     def set_sensor_timer(self):
         # Set up a timer to read sensor data periodically
@@ -258,7 +270,7 @@ class Pico:
     def calculate_hrv(self):
         # Calculate HRV metrics (mean HR, mean PPI, RMSSD, and SDNN)
         mean_hr = int(sum(self.hr_values) / len(self.hr_values))  # Calculate the mean heart rate
-        mean_ppi = int(sum(self.ppi_values) / len(self.ppi_values)) # Calculate the mean PPI
+        mean_ppi = int(sum(self.ppi_intervals) / len(self.ppi_intervals)) # Calculate the mean PPI
         rmssd = self.calculate_rmssd()
         sdnn = self.calculate_sdnn(mean_ppi)
         measurement = { 
@@ -274,7 +286,8 @@ class Pico:
         print(f"RMSSD: {rmssd}")
         print(f"SDNN: {sdnn}")
         
-        #self.send_mqtt_message()
+        if pico.option == 1:
+            self.send_mqtt_message()
         
     
     def send_mqtt_message(self):
@@ -306,9 +319,80 @@ class Pico:
         self.mqtt_client.connect(clean_session=True)
         
 
+    def get_response_data_from_Kubios(self):
+        response = requests.post(  
+            url = self.TOKEN_URL,   
+            data = 'grant_type=client_credentials&client_id={}'.format(self.CLIENT_ID),  
+            headers = {'Content-Type':'application/x-www-form-urlencoded'},  
+            auth = (self.CLIENT_ID, self.CLIENT_SECRET))
         
-
+             
+        response = response.json() #Parse JSON response into a python dictionary  
+        access_token = response["access_token"] #Parse access token 
+                
+        dataset = { 
+            "type": "RRI", 
+            "data": self.ppi_intervals, 
+            "analysis": {"type": "readiness"} 
+            } 
+        # Make the readiness analysis with the given data 
+        response = requests.post( 
+            url = "https://analysis.kubioscloud.com/v2/analytics/analyze", 
+            headers = { "Authorization": "Bearer {}".format(access_token), #use access token to access your Kubios Cloud analysis session 
+                        "X-Api-Key": self.APIKEY}, 
+            json = dataset) #dataset will be automatically converted to JSON by the urequests library  
+         
+        response = response.json() 
+         
+        mean_hr = int(response["analysis"]["mean_hr_bpm"])  
+        mean_ppi = int(response["analysis"]["mean_rr_ms"])  
+        rmssd = int(response["analysis"]["rmssd_ms"])      # RMSSD
+        sdnn = int(response["analysis"]["sdnn_ms"])        # SDNN
+        pns = response["analysis"]["pns_index"]
+        sns = response["analysis"]["sns_index"]
+        
+        self.kubios_response = {"k_mean_hr": mean_hr, "k_mean_ppi": mean_ppi, "k_rmssd": rmssd, "k_sdnn": sdnn, "k_pns": f"{pns:.3f}", "k_sns": f"{sns:.3f}",}
+        if pns < -1 :
+            self.pns_heart = "+"
+        elif pns > -1 and pns < 1:
+            self.pns_heart = "++"
+        elif pns > 1:
+            self.pns_heart = "+++"
             
+        if sns < -1 :
+            self.sns_heart = "+++"
+        elif sns > -1 and sns < 1:
+            self.sns_heart = "++"
+        elif sns > 1:
+            self.sns_heart = "+"
+            
+            
+        if self.kubios_response:
+            self.display_kubios_response()
+        
+        
+    def display_kubios_response(self):
+        # Display instructions for stopping heart rate measurement
+        y_position = 0
+        self.oled.fill(0) # Clear OLED screen
+        hr_line = f"MEAN HR: {self.kubios_response["k_mean_hr"]}"
+        ppi_line = f"MEAN PPI: {self.kubios_response["k_mean_ppi"]}"
+        rmssd_line = f"RMSSD: {self.kubios_response["k_rmssd"]}"
+        sdnn_line = f"SDNN: {self.kubios_response["k_sdnn"]}"
+        sns_line = f"SNS: {self.kubios_response["k_sns"]} {self.sns_heart}"
+        pns_line = f"PNS: {self.kubios_response["k_pns"]} {self.pns_heart}"
+        
+        response_list = [hr_line, ppi_line, rmssd_line, sdnn_line, sns_line, pns_line]
+        
+        for i in response_list:
+            self.oled.text(i, 0, y_position, 1)
+            
+            y_position += 10
+            
+        self.oled.show() # Update the OLED display
+
+
+
 # Instantiate the Pico class with appropriate GPIO pin numbers
 # sw1_pin=8, sensor_pin=27, rot_a=10, rot_b=11, e_switch=12
 pico = Pico(8, 27, 10, 11, 12)
@@ -330,13 +414,13 @@ while True:
      
         
         if encoder_data == -1: # Check for counter-clockwise turn event
-            if pico.highlight > 0: # Ensure it doesn't go out of bounds
-                pico.highlight -= 1 # Move highlight up in the menu
+            if pico.option > 0: # Ensure it doesn't go out of bounds
+                pico.option -= 1 # Move highlight up in the menu
                 pico.display_menu() # Update the menu display
                 
         elif encoder_data == 1:  # Check for clockwise turn event
-            if pico.highlight < 1:  # Ensure it doesn't exceed the menu options
-                pico.highlight += 1 # Move highlight down in the menu
+            if pico.option < 3:  # Ensure it doesn't exceed the menu options
+                pico.option += 1 # Move highlight down in the menu
                 pico.display_menu() # Update the menu display
     
     # Handle events from the SW1 button
@@ -355,13 +439,17 @@ while True:
                     pico.sensor_timer.deinit()  # Stop the screen_timer
                     pico.sensor_timer = None  # Reset screen_timer reference
                 
-                if pico.highlight == 0: # If in heart rate measurement mode
+                if pico.option == 0: # If in heart rate measurement mode
                     if pico.screen_timer:  # Check if screen_timer exists
                         pico.screen_timer.deinit()  # Stop the screen_timer
                         pico.screen_timer = None  # Reset screen_timer reference
                         
-                elif pico.highlight == 1 or pico.highlight == 2: # If in HRV analysis mode
+                elif pico.option == 1 or pico.option == 2: # If in HRV analysis or Kubios mode
                     pico.ppi_values = [] # Clear the PPI values
+                    
+                elif pico.option == 2:
+                    pico.kubios_response = {}
+                    
                     
             else: # If measurement is not currently active
                 pico.set_sensor_timer()
@@ -376,17 +464,18 @@ while True:
             
             pico.count += 1 # Increment the sample counter
             
-            if pico.highlight == 0: # If in heart rate measurement mode
+            if pico.option == 0: # If in heart rate measurement mode
                 if pico.count == 1: # On the first sample
                     pico.display_instruction_HR() # Show stop instructions
                     if not pico.screen_timer:  # Avoid creating multiple timers
                         pico.set_screen_timer() # Set a screen update timer
+                        
             
-            if pico.count < 750:
+            if pico.count < 1000:
                 pico.empty_sensor_fifo() # Ignore initial noise
 
-            if pico.count >= 1000:
-                if pico.count == 1000 or pico.count % 125 == 0:
+            if pico.count >= 1250:
+                if pico.count == 1250 or pico.count % 125 == 0:
                     pico.set_threshold()# Set threshold for peak detection
                      
 
@@ -395,13 +484,17 @@ while True:
                 if pico.count % 500 == 0: # Every 500 samples
                     pico.calculate_hr() # Calculate heart rate
 
-                if pico.highlight == 0: # If in heart rate measurement mode
+                if pico.option == 0: # If in heart rate measurement mode
                     if pico.hr_display_flag: # Check if the OLED needs updating
                         pico.hr_value = int(pico.hr_values[-1]) # Get the latest heart rate
                         pico.display_hr() # Update OLED display with the heart rate
                         pico.hr_display_flag = False # Reset display flag
                     
-                elif pico.highlight == 1 or pico.highlight == 2: # If in HRV analysis mode
-                    if pico.count == 8500: # After 30 seconds of data collection 
+                elif pico.option == 1: # If in HRV analysis mode
+                    if pico.count > 8750:
                         pico.calculate_hrv() # Calculate HRV metrics (Mean HR, Mean PPI, RMSSD, SDNN)
+                        
+                elif pico.option == 2:
+                    if pico.count > 8750 and len(pico.ppi_intervals) > 15 and not pico.kubios_response:
+                         pico.get_response_data_from_Kubios() 
                
