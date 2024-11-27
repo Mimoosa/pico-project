@@ -14,7 +14,7 @@ import urequests as requests
 
 # Define a class to manage the heart rate monitoring device
 class Pico:
-    def __init__(self, sw1_pin, sensor_pin, rot_a, rot_b, e_switch):
+    def __init__(self, sw2_pin, sw1_pin, sensor_pin, rot_a, rot_b, e_switch):
         # Initialize the rotary encoder pins
         self.a = Pin(rot_a, mode=Pin.IN, pull=Pin.PULL_UP) # Pin for encoder A
         self.b = Pin(rot_b, mode=Pin.IN, pull=Pin.PULL_UP) # Pin for encoder B
@@ -22,6 +22,7 @@ class Pico:
         
         # Initialize switch pins with pull-up resistors
         self.switch1 = Pin(sw1_pin, mode = Pin.IN, pull = Pin.PULL_UP)
+        self.switch2 = Pin(sw2_pin, mode = Pin.IN, pull = Pin.PULL_UP)
         # Initialize the ADC for the heart rate sensor
         self.sensor = ADC(Pin(sensor_pin))
         
@@ -38,10 +39,12 @@ class Pico:
         
         # Variables to manage debounce for buttons
         self.last_press_time_sw1 = 0 # Last press time for SW_1
+        self.last_press_time_sw2 = 0 # Last press time for SW_2
         self.last_press_time_encoder_switch = 0 # Last press time for encoder switch 
 
-        # Set up an interrupt for SW_1 button press
+        # Set up an interrupt for SW_1 and SW_2 buttons press
         self.switch1.irq(handler=self.button_handler_sw1, trigger=Pin.IRQ_RISING, hard=True) # Set up interrupt for button press
+        self.switch2.irq(handler=self.button_handler_sw2, trigger=Pin.IRQ_RISING, hard=True) # Set up interrupt for button press
         
         # Set up a timer to read sensor data periodically
         self.sensor_timer = None
@@ -59,7 +62,6 @@ class Pico:
         self.max_value = 0 # Maximum sensor value for peak detection
         self.count = 0 # Counter for samples
         self.peaks = [] # List of detected peak positions
-        self.hr_display_flag = False # Flag for updating the OLED screen
         self.hr_values = [] # List of calculated heart rate values
         self.hr_value = 0 # Current heart rate value to display
         self.ppi_intervals = []  # List of Peak-to-Peak Intervals (PPI)
@@ -78,6 +80,9 @@ class Pico:
         self.TOKEN_URL = "https://kubioscloud.auth.eu-west-1.amazoncognito.com/oauth2/token"  
         self.REDIRECT_URI = "https://analysis.kubioscloud.com/v1/portal/login"
         self.kubios_response = {}
+        self.timestamp = 0
+        self.hrv_measurement = {}
+        self.history_option = 0
   
 
     def turning_encoder_handler(self, pin):
@@ -104,6 +109,16 @@ class Pico:
         if current_time - self.last_press_time_sw1 > 50:  # Check if the press interval is greater than 50 ms
             self.button_fifo.put(2) # Put a value to indicate SW_1 press
             self.last_press_time_sw1 = current_time # Update last press time
+            
+     # Interrupt handler for SW_2 button press
+    def button_handler_sw2(self, pin):
+         # Handler for SW2 button presses
+        current_time = time.ticks_ms() # Get the current time in milliseconds
+
+        if current_time - self.last_press_time_sw1 > 50:  # Check if the press interval is greater than 50 ms
+            self.button_fifo.put(3) # Put a value to indicate SW_2 press
+            self.last_press_time_sw2 = current_time # Update last press time
+            
             
     def display_menu(self):
         # Display the menu on the OLED screen
@@ -149,7 +164,7 @@ class Pico:
     def display_instruction_HR(self):
         # Display instructions for stopping heart rate measurement
         self.oled.fill(0) # Clear OLED screen
-        instruction_line1 = "PRESS THE BUTTON"
+        instruction_line1 = "PRESS SW1 BUTTON"
         instruction_line2 = "TO STOP"
         self.oled.text(instruction_line1, 0, int(self.oled_height / 2) + 10, 1)
         self.oled.text(instruction_line2, 0, int(self.oled_height / 2) + 20, 1)
@@ -208,28 +223,6 @@ class Pico:
         # Set up a timer to read sensor data periodically
         self.sensor_timer = Piotimer(period=4, mode=Piotimer.PERIODIC, callback=self.read_sensor)                      
     
-    
-    def set_screen_timer(self):
-        # Set a timer to periodically update the OLED display
-        self.screen_timer = Piotimer(period=5000, mode=Piotimer.PERIODIC, callback=pico.display_hr_flag)
-
-
-    def display_hr_flag(self, timer):
-        # Set a flag to indicate that the OLED screen should be updated
-        if self.hr_values:  # Check if there are any calculated heart rate values in the hr_values list.
-            self.hr_display_flag = True  # Set the flag to True to indicate the display needs to be updated.
-            
-    
-    # Update the OLED with the current heart rate
-    def display_hr(self):
-        self.oled.fill_rect(0, int(self.oled_height / 2) - 10, self.oled_width, 20, 0) # Clear previous text 
-    
-        hr_value_line = f"{self.hr_value} BPM" # Display heart rate
-       
-        self.oled.text(hr_value_line, 0, int(self.oled_height / 2) - 10, 1) # Display heart rate
-        
-        self.oled.show() # Update the OLED display
-
 
     def calculate_rmssd(self):
         # Calculate RMSSD (Root Mean Square of Successive Differences)
@@ -261,7 +254,13 @@ class Pico:
         avg_differences = sum(differences) / len(differences)
         
         return int(avg_differences ** 0.5) # Calculate the square root of the average squared difference and return int
-        
+    
+    
+    def get_timestamp(self):
+        ts = time.gmtime()
+
+        self.timestamp = f"{ts[2]}.{ts[1]}.{ts[0]} {ts[3]}:{ts[4]}"
+    
 
     def calculate_hrv(self):
         # Calculate HRV metrics (mean HR, mean PPI, RMSSD, and SDNN)
@@ -269,22 +268,22 @@ class Pico:
         mean_ppi = int(sum(self.ppi_intervals) / len(self.ppi_intervals)) # Calculate the mean PPI
         rmssd = self.calculate_rmssd()
         sdnn = self.calculate_sdnn(mean_ppi)
-        measurement = { 
+        self.hrv_measurement = { 
                         "mean_hr": mean_hr, 
                         "mean_ppi": mean_ppi, 
                         "rmssd": rmssd, 
                         "sdnn": sdnn 
                         } 
-        self.json_message = ujson.dumps(measurement)
+        self.json_message = ujson.dumps(self.hrv_measurement)
         
         print(f"MEAN HR: {mean_hr}")
         print(f"MEAN PPI: {mean_ppi}")
         print(f"RMSSD: {rmssd}")
         print(f"SDNN: {sdnn}")
-        
-        
+   
+     
         #self.send_mqtt_message()
-        self.save_data(measurement)
+        self.save_data()
         
     
     def send_mqtt_message(self):
@@ -366,14 +365,45 @@ class Pico:
         pns_value = f"{pns:.3f}"
         
         sns_value = f"{sns:.3f}"
+
         
-        self.kubios_response = {"k_mean_hr": mean_hr, "k_mean_ppi": mean_ppi, "k_rmssd": rmssd, "k_sdnn": sdnn, "k_pns": pns_value + " " + pns_level, "k_sns":  sns_value + " " + sns_level,}
+        self.kubios_response = {
+                                "mean_hr": mean_hr,
+                                "mean_ppi": mean_ppi,
+                                "rmssd": rmssd,
+                                "sdnn": sdnn,
+                                "pns": pns_value + " " + pns_level,
+                                "sns":  sns_value + " " + sns_level
+                                }
             
         if self.kubios_response:
             self.display_kubios_response()
-            self.save_data(self.kubios_response)
+            self.save_data()
+        
+        
+    def save_data(self):
+        self.get_timestamp()
+        if self.option == 2:
+            data = {"option": "kubios",
+                    "timestamp": self.timestamp,
+                    "mean_hr": self.kubios_response["mean_hr"],
+                    "mean_ppi": self.kubios_response["mean_ppi"],
+                    "rmssd": self.kubios_response["rmssd"],
+                    "sdnn": self.kubios_response["sdnn"],
+                    "pns": self.kubios_response["pns"],
+                    "sns": self.kubios_response["sns"]
+                    }
             
-    def save_data(self, data):
+        elif self.option == 1:
+            data = {"option": "basic_hrv",
+                    "timestamp": self.timestamp,
+                    "mean_hr": self.hrv_measurement["mean_hr"],
+                    "mean_ppi": self.hrv_measurement["mean_ppi"],
+                    "rmssd": self.hrv_measurement["rmssd"],
+                    "sdnn": self.hrv_measurement["sdnn"],
+                    }
+            
+        
         with open('history.txt', 'a') as file:
             file.write(f"{ujson.dumps(data)}\n")
             
@@ -385,19 +415,23 @@ class Pico:
             latest_three = lines[-3:]
             
             with open('history.txt', 'w') as file:
-                file.writelines(latest_three)
+                pass
+            
+            with open('history.txt', 'r') as file:
+                for line in latest_three:
+                    file.write(line)
         
         
     def display_kubios_response(self):
         # Display instructions for stopping heart rate measurement
         y_position = 0
         self.oled.fill(0) # Clear OLED screen
-        hr_line = f"MEAN HR: {self.kubios_response['k_mean_hr']}"
-        ppi_line = f"MEAN PPI: {self.kubios_response['k_mean_ppi']}"
-        rmssd_line = f"RMSSD: {self.kubios_response['k_rmssd']}"
-        sdnn_line = f"SDNN: {self.kubios_response['k_sdnn']}"
-        sns_line = f"SNS: {self.kubios_response['k_sns']}"
-        pns_line = f"PNS: {self.kubios_response['k_pns']}"
+        hr_line = f"MEAN HR: {self.kubios_response['mean_hr']}"
+        ppi_line = f"MEAN PPI: {self.kubios_response['mean_ppi']}"
+        rmssd_line = f"RMSSD: {self.kubios_response['rmssd']}"
+        sdnn_line = f"SDNN: {self.kubios_response['sdnn']}"
+        sns_line = f"SNS: {self.kubios_response['sns']}"
+        pns_line = f"PNS: {self.kubios_response['pns']}"
         
         response_list = [hr_line, ppi_line, rmssd_line, sdnn_line, sns_line, pns_line]
         
@@ -407,12 +441,39 @@ class Pico:
             y_position += 10
             
         self.oled.show() # Update the OLED display
+        
+        
+    
+    def select_history_data(self):
+         # Display the menu on the OLED screen
+        self.oled.fill(0) # Clear the OLED screen
+        
+        y_position = 0
+        
+        instruction_text1 = "PRESS SW2 BUTTON"
+        instruction_text2 = "TO RETURN"
+        
+        for i in range(3):
+            history_option_text= f"MEASUREMENT{i + 1}"
+            if i == self.history_option: # Highlight the selected option
+                self.oled.fill_rect(0, y_position, self.oled_width, 8, 1) # Draw highlight rectangle
+                self.oled.text(history_option_text, 0, y_position, 0) # Display highlighted option in black color
+
+            else:
+                self.oled.text(history_option_text, 0, y_position, 1) # Display other options in white color
+
+            y_position += 12 # Move down for the next option
+        
+        self.oled.text(instruction_text1, 0, y_position + 8, 1)
+        self.oled.text(instruction_text2, 0, y_position + 20, 1)
+
+        self.oled.show() # Update the OLED display with new content
 
 
 
 # Instantiate the Pico class with appropriate GPIO pin numbers
 # sw1_pin=8, sensor_pin=27, rot_a=10, rot_b=11, e_switch=12
-pico = Pico(8, 27, 10, 11, 12)
+pico = Pico(7, 8, 27, 10, 11, 12)
 
 # Display the main menu on the OLED screen
 pico.display_menu()
@@ -424,55 +485,75 @@ while True:
         encoder_data = pico.encoder_fifo.get() # Get the data from the FIFO
         
         if encoder_data == 2: # If the encoder button is pressed
-            pico.display_instruction1()  # Show the instructions for starting measurement
+            if pico.option == 3:
+                pico.select_history_data()
+            else:
+                pico.display_instruction1()  # Show the instructions for starting measurement
      
         
         if encoder_data == -1: # Check for counter-clockwise turn event
-            if pico.option > 0: # Ensure it doesn't go out of bounds
-                pico.option -= 1 # Move highlight up in the menu
-                pico.display_menu() # Update the menu display
+            if pico.option == 3:
+                if pico.history_option > 0: # Ensure it doesn't go out of bounds
+                    pico.history_option -= 1
+                    pico.select_history_data()
+            else:
+                if pico.option > 0: # Ensure it doesn't go out of bounds
+                    pico.option -= 1 # Move highlight up in the menu
+                    pico.display_menu() # Update the menu display
                 
         elif encoder_data == 1:  # Check for clockwise turn event
-            if pico.option < 3:  # Ensure it doesn't exceed the menu options
-                pico.option += 1 # Move highlight down in the menu
-                pico.display_menu() # Update the menu display
-    
+            if pico.option == 3:
+                if pico.history_option < 2: # Ensure it doesn't go out of bounds
+                    pico.history_option += 1
+                    pico.select_history_data()
+            else:
+                if pico.option < 3:  # Ensure it doesn't exceed the menu options
+                    pico.option += 1 # Move highlight down in the menu
+                    pico.display_menu() # Update the menu display
+        
     # Handle events from the SW1 button
     if pico.button_fifo.has_data():
         button_data = pico.button_fifo.get() # Get the data from the FIFO queue
 
         if button_data == 2: # If SW_1 button press is detected
-            if pico.measurement_on: # If measurement is currently active
-                pico.measurement_on = False # Stop measurement
-                pico.count = 0 # Reset the sample counter
-                pico.display_menu() # Return to the main menu
-                pico.peaks = [] # Clear the list of detected peaks
-                pico.hr_values = []  # Clear the heart rate values
-                pico.empty_sensor_fifo() # Clear FIFO
-                if pico.sensor_timer:  # Check if screen_timer exists
-                    pico.sensor_timer.deinit()  # Stop the screen_timer
-                    pico.sensor_timer = None  # Reset screen_timer reference
-                
-                if pico.option == 0: # If in heart rate measurement mode
-                    if pico.screen_timer:  # Check if screen_timer exists
-                        pico.screen_timer.deinit()  # Stop the screen_timer
-                        pico.screen_timer = None  # Reset screen_timer reference
+            if pico.option != 3:
+                if pico.measurement_on: # If measurement is currently active     
+                    pico.measurement_on = False # Stop measurement
+                    pico.count = 0 # Reset the sample counter
+                    pico.display_menu() # Return to the main menu
+                    pico.peaks = [] # Clear the list of detected peaks
+                    pico.hr_values = []  # Clear the heart rate values
+                    pico.option = 0
+                    pico.empty_sensor_fifo() # Clear FIFO
+                    
+                    if pico.sensor_timer:  # Check if screen_timer exists
+                        pico.sensor_timer.deinit()  # Stop the screen_timer
+                        pico.sensor_timer = None  # Reset screen_timer reference
+                    
+                    if pico.option == 0: # If in heart rate measurement mode
+                        if pico.screen_timer:  # Check if screen_timer exists
+                            pico.screen_timer.deinit()  # Stop the screen_timer
+                            pico.screen_timer = None  # Reset screen_timer reference
+                            
+                    elif pico.option == 1 or pico.option == 2: # If in HRV analysis or Kubios mode
+                        pico.ppi_values = [] # Clear the PPI values
                         
-                elif pico.option == 1 or pico.option == 2: # If in HRV analysis or Kubios mode
-                    pico.ppi_values = [] # Clear the PPI values
-                    
-                elif pico.option == 1:
-                    pico.json_message = {}
-                    
-                elif pico.option == 2:
-                    pico.kubios_response = {}
-                    
-                    
-            else: # If measurement is not currently active
-                pico.set_sensor_timer()
-                pico.measurement_on = True # Start measurement
+                    elif pico.option == 1:
+                        self.hrv_measurement = {}
+                        
+                    elif pico.option == 2:
+                        pico.kubios_response = {}
+                        
+                        
+                else: # If measurement is not currently active
+                    pico.set_sensor_timer()
+                    pico.measurement_on = True # Start measurement
+
+        if button_data == 3:        
+            if pico.option == 3:
+                pico.display_menu() # Return to the main menu
+                pico.option = 0
                 
-    
     # Handle sensor data processing    
     if pico.sensor_fifo.has_data(): # Check if there is data in the FIFO
         sample = pico.sensor_fifo.get() # Get the data from the FIFO
@@ -481,12 +562,10 @@ while True:
             
             pico.count += 1 # Increment the sample counter
             
-            if pico.option == 0: # If in heart rate measurement mode
-                if pico.count == 1: # On the first sample
-                    pico.display_instruction_HR() # Show stop instructions
-                    if not pico.screen_timer:  # Avoid creating multiple timers
-                        pico.set_screen_timer() # Set a screen update timer
-                        
+            
+            if pico.count == 1: # On the first sample
+                pico.display_instruction_HR() # Show stop instructions
+
             
             if pico.count < 1000:
                 pico.empty_sensor_fifo() # Ignore initial noise
@@ -501,13 +580,7 @@ while True:
                 if pico.count % 500 == 0: # Every 500 samples
                     pico.calculate_hr() # Calculate heart rate
 
-                if pico.option == 0: # If in heart rate measurement mode
-                    if pico.hr_display_flag: # Check if the OLED needs updating
-                        pico.hr_value = int(pico.hr_values[-1]) # Get the latest heart rate
-                        pico.display_hr() # Update OLED display with the heart rate
-                        pico.hr_display_flag = False # Reset display flag
-                    
-                elif pico.option == 1 and not pico.json_message: # If in HRV analysis mode
+                elif pico.option == 1 and not pico.hrv_measurement: # If in HRV analysis mode
                     if pico.count > 8750:
                         pico.calculate_hrv() # Calculate HRV metrics (Mean HR, Mean PPI, RMSSD, SDNN)
                         
