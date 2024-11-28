@@ -556,7 +556,7 @@ while True:
      
         
         if encoder_data == -1: # Check for counter-clockwise turn event
-            if pico.option == 3: # If in the history menu
+            if pico.in_history_menu: # If in the history menu
                 if pico.history_option > 0: # Ensure it doesn't go out of bounds
                     pico.history_option -= 1 # Move the selection up
                     pico.display_history_menu() # Update the history menu display
@@ -566,7 +566,7 @@ while True:
                     pico.display_main_menu() # Update the menu display
                 
         elif encoder_data == 1:  # Check for clockwise turn event
-            if pico.option == 3: # If in the history menu
+            if pico.in_history_menu: # If in the history menu
                 if pico.history_option < 2: # Ensure it doesn't go out of bounds
                     pico.history_option += 1 # Move the selection up
                     pico.display_history_menu() # Update the history menu display
