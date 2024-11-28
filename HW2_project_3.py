@@ -134,7 +134,7 @@ class Pico:
         
         y_position = 0
         
-        options = ["MEASURE HR", "BASIC HRV ANALYSIS", "KUBIOS", "HISTORY"]
+        options = ["MEASURE HR", "BASIC HRV", "KUBIOS", "HISTORY"]
      
         
         for i in range(4):
