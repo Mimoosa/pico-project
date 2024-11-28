@@ -35,7 +35,7 @@ class Pico:
         
         # Initialize FIFO queues for button, sensor, and encoder events
         self.button_fifo = Fifo(30, typecode='i') # FIFO for button events
-        self.sensor_fifo = Fifo(500, typecode='i') # FIFO for sensor readings
+        self.sensor_fifo = Fifo(750, typecode='i') # FIFO for sensor readings
         self.encoder_fifo = Fifo(30, typecode='i') # FIFO for encoder events
         
         # Variables to manage debounce for buttons
@@ -57,7 +57,7 @@ class Pico:
         self.option = 0 # Initialize highlighted menu item
         self.measurement_on = False# Flag to indicate if measurement is active
         self.threshold = 0 # Peak detection threshold
-        self.thresval = 0.9 # Relative threshold multiplier
+        self.thresval = 0.8 # Relative threshold multiplier
         self.max_value = 0 # Maximum sensor value for peak detection
         self.count = 0 # Counter for samples
         self.peaks = [] # List of detected peak positions
@@ -70,9 +70,9 @@ class Pico:
         self.PASSWORD = "MMN8MMN8"
         self.BROKER_IP = "192.168.8.253"
         self.wlan = None
-        self.connect_wlan() # Connect to WiFi
+        #self.connect_wlan() # Connect to WiFi
         self.mqtt_client = None
-        self.connect_mqtt() # Connect to MQTT broker
+        #self.connect_mqtt() # Connect to MQTT broker
         
         
         # Kubios Cloud settings
@@ -287,7 +287,7 @@ class Pico:
         # Convert the HRV metrics dictionary into a JSON-formatted string
         self.json_message = ujson.dumps(self.hrv_measurement)
      
-        self.send_mqtt_message() # Send the HRV metrics to an MQTT topic
+        #self.send_mqtt_message() # Send the HRV metrics to an MQTT topic
         self.save_data() # Save the HRV metrics to a file
         
     
@@ -589,7 +589,7 @@ while True:
                     pico.peaks = [] # Clear the list of detected peaks
                     pico.hr_values = []  # Clear the heart rate values
                     pico.empty_sensor_fifo() # Clear FIFO
-                    pico.ppi_values = [] # Clear the PPI values
+                    pico.ppi_intervals = [] # Clear the PPI values
                     pico.hrv_measurement = {} # Clear HRV measurement
                     pico.kubios_response = {} # Clear Kubios response data
                     if pico.sensor_timer:  # Check if sensor_timer exists
@@ -599,9 +599,9 @@ while True:
                         
                         
                 else: # If measurement is not currently active
-                    print(pico.option)
                     pico.set_sensor_timer() # Start the sensor timer
                     pico.measurement_on = True # Start measurement
+                    
 
         if button_data == 3: # If SW2 button press is detected       
             if pico.option == 3: # If in the History option
@@ -647,6 +647,5 @@ while True:
                         
                 elif pico.option == 2: # If in Kubios analysis mode
                     if pico.count > 8750 and len(pico.ppi_intervals) > 15 and not pico.kubios_response:
-                        print(
-                         pico.get_response_data_from_Kubios() # Send data to Kubios and process the response
+                        pico.get_response_data_from_Kubios() # Send data to Kubios and process the response
                
