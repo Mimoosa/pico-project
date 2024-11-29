@@ -467,26 +467,42 @@ class Pico:
         # Display the history menu on the OLED screen
         self.oled.fill(0) # Clear the OLED screen
         y_position = 0 # Starting vertical position for the menu items
-
+        
+        # Instruction texts to be displayed at the bottom of the screen
         instruction_text1 = "PRESS SW2 BUTTON" # Instruction line 1
         instruction_text2 = "TO RETURN" # Instruction line 2
         
-         # Loop through the 3 history options and display them
-        for i in range(3):
-            history_option_text= f"MEASUREMENT{i + 1}" # Menu option text
-            if i == self.history_option: # Highlight the selected option
-                self.oled.fill_rect(0, y_position, self.oled_width, 8, 1) # Draw highlight rectangle
-                self.oled.text(history_option_text, 0, y_position, 0) # Display highlighted option in black color
+        # Open the history file and read its content
+        with open('history.txt', 'r') as file:
+            lines = file.readlines() # Read all lines from the history file
+        
+        # Check if the file is empty
+        if not lines:
+            # If no data is available, display a "No Data" message
+            message1 = "NO DATA"
+            message2 = "AVAILABLE"
+            
+            self.oled.text(message1, 0, self.oled_height // 2 - 16, 1)
+            self.oled.text(message2, 0, self.oled_height // 2 - 4, 1)
+            
+        else:
+            # If data is available, display the history menu with up to 3 options
+            for i in range(min(len(lines), 3)):
+                history_option_text= f"MEASUREMENT{i + 1}" # Menu option text
+                if i == self.history_option: # Highlight the selected option
+                    self.oled.fill_rect(0, y_position, self.oled_width, 8, 1) # Draw highlight rectangle
+                    self.oled.text(history_option_text, 0, y_position, 0) # Display highlighted option in black color
 
-            else:
-                self.oled.text(history_option_text, 0, y_position, 1) # Display other options in white color
+                else:
+                    self.oled.text(history_option_text, 0, y_position, 1) # Display other options in white color
 
-            y_position += 12 # Move down for the next option
+                y_position += 12 # Move down for the next option
         
         # Add return instructions at the bottom of the screen
-        self.oled.text(instruction_text1, 0, y_position + 8, 1)
-        self.oled.text(instruction_text2, 0, y_position + 20, 1)
-
+        self.oled.text(instruction_text1, 0, 44, 1)
+        self.oled.text(instruction_text2, 0, 56, 1)
+            
+       
         self.oled.show() # Update the OLED display with new content
         
     def display_history(self):
