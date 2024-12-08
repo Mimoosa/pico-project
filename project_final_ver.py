@@ -70,7 +70,7 @@ class Pico:
         self.PASSWORD = "MMN8MMN8"
         self.BROKER_IP = "192.168.8.253"
         self.wlan = None
-        self.connect_wlan() # Connect to WiFi
+        #self.connect_wlan() # Connect to WiFi
         self.mqtt_client = None
         
         
@@ -774,7 +774,10 @@ while True:
                         
                         
                 else: # If measurement is not currently active
-                    if pico.option == 1:
+                    if pico.option == 0: # If in the HR measurement mode
+                        if not pico.screen_timer:  # Avoid creating multiple timers
+                            pico.set_screen_timer() # Set a screen update timer
+                    elif pico.option == 1:
                         pico.connect_mqtt_hrv()# Connect to the MQTT broker for HRV (Heart Rate Variability) analysis
                         pico.show_collecting_data()
                     elif pico.option == 2:
@@ -827,12 +830,10 @@ while True:
                     
                     
                 if pico.option == 0: # If in the HR measurement mode
-                    if not pico.screen_timer:  # Avoid creating multiple timers
-                        pico.set_screen_timer() # Set a screen update timer
                     
                     pico.update_live_PPG(sample) # Update the live PPG signal on the OLED
                     
-                    if pico.hr_display_flag: # Check if the OLED needs updating
+                    if pico.hr_display_flag and pico.hr_values: # Check if the OLED needs updating
                         pico.hr_value = int(pico.hr_values[-1]) # Get the latest heart rate
                         pico.display_hr() # Update OLED display with the heart rate
                         pico.hr_display_flag = False # Reset display flag
