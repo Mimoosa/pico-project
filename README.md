@@ -12,6 +12,9 @@ Features include:
 Built with MicroPython on Thonny IDE, this system demonstrates a multifunctional health tech device that is reliable, accurate, and easy to use.  
 This project was developed as part of a first-year hardware course at Metropolia University of Applied Sciences.
 
+## Demo Video
+[Watch the demo on YouTube](https://youtu.be/8pyPAxeFJRg)
+
 ## Software & Tools
 - **MicroPython**: Program code executed through Pico firmware  
 - **Thonny IDE**: Development and debugging environment for Raspberry Pi Pico  
